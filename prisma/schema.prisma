@@ -1,0 +1,155 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  ELECTRICIAN
+}
+
+enum UserStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id        String     @id @default(uuid())
+  username  String     @unique
+  password  String
+  name      String
+  role      UserRole   @default(ELECTRICIAN)
+  status    UserStatus @default(PENDING)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  assignedDemands Demand[] @relation("AssignedElectrician")
+  createdDemands  Demand[] @relation("CreatedByAdmin")
+  reports         Report[]
+  auditLogs       AuditLog[]
+
+  @@map("users")
+}
+
+model Material {
+  id          String   @id @default(uuid())
+  name        String
+  imageUrl    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  plannedIn   DemandMaterial[]
+  usedIn      UsedMaterial[]
+  returnedAs  ReturnedMaterial[]
+
+  @@map("materials")
+}
+
+enum DemandStatus {
+  PLANNED
+  IN_PROGRESS
+  PENDING_APPROVAL
+  CONCLUDED
+}
+
+model Demand {
+  id                   String         @id @default(uuid())
+  date                 DateTime
+  description          String
+  location             String
+  clientNumber         String?
+  status               DemandStatus   @default(PLANNED)
+  
+  electricianId        String
+  electrician          User           @relation("AssignedElectrician", fields: [electricianId], references: [id])
+  
+  createdById          String
+  createdBy            User           @relation("CreatedByAdmin", fields: [createdById], references: [id])
+
+  photoUrl             String?
+  transformerNumber    String?
+  observation          String?
+  vehicles             String[]       // Array of strings for simplicity as per requirement
+  
+  plannedMaterials     DemandMaterial[]
+  usedMaterials        UsedMaterial[]
+  returnedMaterials    ReturnedMaterial[]
+
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  @@map("demands")
+}
+
+model DemandMaterial {
+  id         String   @id @default(uuid())
+  demandId   String
+  demand     Demand   @relation(fields: [demandId], references: [id], onDelete: Cascade)
+  materialId String
+  material   Material @relation(fields: [materialId], references: [id])
+  quantity   Int
+
+  @@map("demand_materials")
+}
+
+model UsedMaterial {
+  id         String   @id @default(uuid())
+  demandId   String
+  demand     Demand   @relation(fields: [demandId], references: [id], onDelete: Cascade)
+  materialId String
+  material   Material @relation(fields: [materialId], references: [id])
+  quantity   Int
+
+  @@map("used_materials")
+}
+
+enum ReturnType {
+  NOT_USED
+  DEFECTIVE
+}
+
+model ReturnedMaterial {
+  id         String     @id @default(uuid())
+  demandId   String
+  demand     Demand     @relation(fields: [demandId], references: [id], onDelete: Cascade)
+  materialId String
+  material   Material   @relation(fields: [materialId], references: [id])
+  quantity   Int
+  type       ReturnType
+
+  @@map("returned_materials")
+}
+
+model Report {
+  id             String   @id @default(uuid())
+  weekStartDate  DateTime
+  weekEndDate    DateTime
+  pdfUrl         String?
+  docxUrl        String?
+  generatedById  String
+  generatedBy    User     @relation(fields: [generatedById], references: [id])
+  createdAt      DateTime @default(now())
+
+  @@map("reports")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String
+  entity    String
+  entityId  String?
+  details   Json?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@map("audit_logs")
+}
