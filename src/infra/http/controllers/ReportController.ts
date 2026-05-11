@@ -93,23 +93,24 @@ export class ReportController {
       doc.pipe(res);
 
       // --- CAPA PROFISSIONAL ---
-      // Background Accent (Top Rectangle)
-      doc.rect(0, 0, 612, 150).fill('#0284c7');
+      // Background Accent (Top Header - White for Logo Contrast)
+      doc.rect(0, 0, 612, 180).fill('#FFFFFF');
       
       try {
         const logoResponse = await axios.get('https://i.postimg.cc/W3n0DdqH/pref-logo-sha.png', { responseType: 'arraybuffer' });
-        doc.image(logoResponse.data, 256, 40, { width: 100 });
+        doc.image(logoResponse.data, 236, 30, { width: 140 });
       } catch (e) {}
 
-      doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(24).text('RELATÓRIO SEMANAL', 0, 180, { align: 'center' });
-      doc.fontSize(18).text('ALMOXARIFADO DE ELÉTRICA', 0, 210, { align: 'center' });
+      doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(26).text('RELATÓRIO SEMANAL', 0, 155, { align: 'center', characterSpacing: 1 });
+      doc.fontSize(16).text('ALMOXARIFADO DE MANUTENÇÃO ELÉTRICA', 0, 190, { align: 'center', characterSpacing: 0.5 });
       
-      doc.fillColor('#333333').font('Helvetica').fontSize(14).text(`PERÍODO: ${start} À ${end}`, 0, 260, { align: 'center' });
+      doc.fillColor('#475569').font('Helvetica-Bold').fontSize(14).text(`PERÍODO: ${start} À ${end}`, 0, 240, { align: 'center' });
       
-      doc.rect(150, 290, 312, 2).fill('#0284c7');
+      doc.rect(180, 265, 252, 3).fill('#0284c7');
       
-      doc.fillColor('#666666').fontSize(12).text('SECRETARIA DE INFRAESTRUTURA - SEINFRA', 0, 700, { align: 'center' });
-      doc.text(format(new Date(), "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR }), 0, 720, { align: 'center' });
+      // Cover details
+      doc.fillColor('#64748b').font('Helvetica').fontSize(11).text('SECRETARIA DE INFRAESTRUTURA - SEINFRA', 0, 710, { align: 'center' });
+      doc.font('Helvetica-Bold').fillColor('#0f172a').text(format(new Date(), "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR }).toUpperCase(), 0, 730, { align: 'center' });
       
       doc.addPage();
 
@@ -127,138 +128,193 @@ export class ReportController {
       }, {});
 
       for (const [electricianName, eDemands] of Object.entries(grouped) as any[]) {
-        doc.font('Helvetica-Bold').fontSize(14).fillColor('#0284c7').text(`EQUIPE: ${electricianName.toUpperCase()}`, { underline: true });
-        doc.moveDown(0.5);
+        // Page Heading for Electrician
+        doc.rect(50, 40, 512, 30).fill('#f8fafc');
+        doc.font('Helvetica-Bold').fontSize(14).fillColor('#0284c7').text(`ELETRICISTA: ${electricianName.toUpperCase()}`, 60, 50);
+        doc.moveDown(1.5);
         doc.fillColor('#000000');
 
         for (const d of eDemands) {
-          // Demand Header
-          doc.rect(50, doc.y, 512, 20).fill('#f1f5f9');
-          doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(11).text(`${format(new Date(d.date), 'dd/MM/yyyy')} - ${d.location}`, 60, doc.y - 15);
-          doc.moveDown(0.5);
-          doc.fillColor('#475569').font('Helvetica').fontSize(10).text(`Descrição: ${d.description}`, { oblique: true });
+          // Check for page break BEFORE demand
+          if (doc.y > 600) doc.addPage();
+
+          // Demand Card Header
+          const startY = doc.y;
+          doc.rect(50, startY, 512, 22).fill('#f1f5f9');
+          doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(11).text(`${format(new Date(d.date), 'dd/MM/yyyy')} - ${d.location}`, 60, startY + 6);
+          doc.moveDown(0.8);
           
+          doc.fillColor('#334155').font('Helvetica').fontSize(10).text(`Descrição: ${d.description}`, { oblique: true, lineGap: 2 });
           doc.moveDown(0.5);
-          doc.fillColor('#000000').font('Helvetica-Bold').fontSize(10).text('EQUIPE RESPONSÁVEL:');
-          doc.font('Helvetica').fontSize(9).text(d.electricians.map((e: any) => e.name).join(', '));
-          doc.moveDown(0.3);
 
-          // Grid for Materials
-          const currentY = doc.y;
-          const colWidth = 250;
+          // Details Section
+          doc.fillColor('#64748b').font('Helvetica-Bold').fontSize(8).text('EQUIPE:', 60);
+          doc.fillColor('#0f172a').font('Helvetica').fontSize(9).text(d.electricians.map((e: any) => e.name).join(', '), 110, doc.y - 10);
+          doc.moveDown(0.4);
 
-          // Left Column: Materials
-          doc.font('Helvetica-Bold').fontSize(10).text('MATERIAIS PLANEJADOS:', 50, currentY);
-          d.plannedMaterials.forEach((m: any) => {
-            doc.font('Helvetica').fontSize(9).text(`• ${String(m.quantity).padStart(2, '0')} ${m.material.unit || 'un'} - ${m.material.name}`, 60);
+          // Inventory Table Header
+          const tableY = doc.y;
+          doc.rect(50, tableY, 512, 15).fill('#334155');
+          doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(8);
+          doc.text('DESCRIÇÃO DO MATERIAL', 60, tableY + 4);
+          doc.text('PLANEJ.', 380, tableY + 4);
+          doc.text('UTILIZ.', 430, tableY + 4);
+          doc.text('SOBRA', 480, tableY + 4);
+          doc.moveDown(0.8);
+
+          // Combine unique materials from all lists
+          const allMaterialIds = new Set([
+            ...d.plannedMaterials.map((m: any) => m.materialId),
+            ...d.usedMaterials.map((m: any) => m.materialId),
+            ...d.returnedMaterials.map((m: any) => m.materialId)
+          ]);
+
+          doc.fillColor('#000000').font('Helvetica').fontSize(8);
+          allMaterialIds.forEach((mId: any) => {
+            if (doc.y > 750) {
+              doc.addPage();
+              // Re-draw table header on new page for the same demand if it breaks
+              const newTableY = doc.y;
+              doc.rect(50, newTableY, 512, 15).fill('#334155');
+              doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(8);
+              doc.text('DESCRIÇÃO DO MATERIAL (CONT.)', 60, newTableY + 4);
+              doc.text('PLANEJ.', 380, newTableY + 4);
+              doc.text('UTILIZ.', 430, newTableY + 4);
+              doc.text('SOBRA', 480, newTableY + 4);
+              doc.moveDown(0.8);
+              doc.fillColor('#000000').font('Helvetica').fontSize(8);
+            }
+
+            const pm = d.plannedMaterials.find((m: any) => m.materialId === mId);
+            const um = d.usedMaterials.find((m: any) => m.materialId === mId);
+            const rm = d.returnedMaterials.find((m: any) => m.materialId === mId && m.type === 'NOT_USED');
+            const material = pm?.material || um?.material || rm?.material;
+
+            const lineY = doc.y;
+            doc.text(material?.name || 'Material Desconhecido', 60, lineY);
+            doc.text(`${pm?.quantity || 0} ${material?.unit || ''}`, 380, lineY);
+            doc.text(`${um?.quantity || 0} ${material?.unit || ''}`, 430, lineY);
+            doc.text(`${rm?.quantity || 0} ${material?.unit || ''}`, 480, lineY);
+            
+            if (um) {
+              const key = um.material.id;
+              if (!totals.used[key]) totals.used[key] = { name: um.material.name, unit: um.material.unit, quantity: 0 };
+              totals.used[key].quantity += um.quantity;
+            }
+
+            doc.moveDown(0.2);
           });
 
-          doc.moveDown(0.3);
-          doc.font('Helvetica-Bold').fontSize(10).text('MATERIAIS UTILIZADOS:');
-          if (d.usedMaterials.length === 0) {
-            doc.font('Helvetica').fontSize(9).text('Nenhum material utilizado.');
-          } else {
-            d.usedMaterials.forEach((m: any) => {
-              doc.font('Helvetica').fontSize(9).text(`• ${String(m.quantity).padStart(2, '0')} ${m.material.unit || 'un'} - ${m.material.name}`);
-              const key = m.material.id;
-              if (!totals.used[key]) totals.used[key] = { name: m.material.name, unit: m.material.unit, quantity: 0 };
-              totals.used[key].quantity += m.quantity;
-            });
-          }
-
-          // Surplus and Others
-          doc.moveDown(0.3);
-          const surplus = d.returnedMaterials.filter((m: any) => m.type === 'NOT_USED');
-          doc.font('Helvetica-Bold').fontSize(10).text('MATERIAIS PARA RETORNO (SOBRA):');
-          if (surplus.length === 0) {
-            doc.font('Helvetica').fontSize(9).text('Nenhuma sobra registrada.');
-          } else {
-            surplus.forEach((m: any) => {
-              doc.font('Helvetica').fontSize(9).text(`• ${String(m.quantity).padStart(2, '0')} ${m.material.unit || 'un'} - ${m.material.name}`);
-            });
-          }
-
+          // Resources and Damaged
           const damaged = d.returnedMaterials.filter((m: any) => m.type === 'DAMAGED' || m.type === 'DEFECTIVE');
           if (damaged.length > 0) {
-            doc.moveDown(0.3);
-            doc.font('Helvetica-Bold').fontSize(10).text('MATERIAIS DANIFICADOS:');
+            doc.moveDown(0.4);
+            doc.fillColor('#b91c1c').font('Helvetica-Bold').fontSize(8).text('DANIFICADOS/DEFEITUOSOS:', 60);
             damaged.forEach((m: any) => {
-              doc.font('Helvetica').fontSize(9).text(`• ${String(m.quantity).padStart(2, '0')} ${m.material.unit || 'un'} - ${m.material.name} (DANIFICADO)`);
+              doc.font('Helvetica').fontSize(8).text(`• ${m.quantity} ${m.material.unit || 'un'} - ${m.material.name}`, 70);
               const key = `DAMAGED-${m.material.id}`;
               if (!totals.returned[key]) totals.returned[key] = { name: m.material.name, unit: m.material.unit, quantity: 0, type: 'Danificado' };
               totals.returned[key].quantity += m.quantity;
             });
           }
 
-          // Vehicles and Ladder
-          doc.moveDown(0.3);
-          doc.font('Helvetica-Bold').fontSize(10).text('RECURSOS UTILIZADOS:');
           const resources = [];
           if (d.vehicles && d.vehicles.length > 0) resources.push(`Veículos: ${d.vehicles.join(', ')}`);
           if (d.ladder) resources.push(`Escada: ${d.ladder}`);
-          
-          if (resources.length === 0) {
-            doc.font('Helvetica').fontSize(9).text('Nenhum recurso extra registrado.');
-          } else {
-            resources.forEach(r => doc.font('Helvetica').fontSize(9).text(`• ${r}`));
+          if (resources.length > 0) {
+            doc.moveDown(0.4);
+            doc.fillColor('#0284c7').font('Helvetica-Bold').fontSize(8).text('RECURSOS UTILIZADOS:', 60);
+            resources.forEach(r => doc.fillColor('#0f172a').font('Helvetica').fontSize(8).text(`• ${r}`, 70));
           }
-          
-          doc.moveDown();
-          doc.rect(50, doc.y, 512, 1).fill('#e2e8f0').moveDown(0.5);
 
-          // Check for page break
-          if (doc.y > 650) doc.addPage();
+          doc.moveDown(1.5);
+          doc.rect(50, doc.y, 512, 0.5).fill('#e2e8f0');
+          doc.moveDown(1);
         }
         doc.addPage();
       }
 
       // --- DASHBOARD DE RESUMO GERAL ---
-      doc.rect(0, 0, 612, 80).fill('#0f172a');
-      doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(16).text('DASHBOARD SEMANAL - RESUMO DE OPERAÇÕES', 0, 30, { align: 'center' });
+      // Header matching cleaner style
+      doc.rect(0, 0, 612, 100).fill('#FFFFFF');
+      doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(18).text('DASHBOARD SEMANAL - INTELIGÊNCIA OPERACIONAL', 0, 40, { align: 'center' });
+      doc.rect(150, 70, 312, 2).fill('#0284c7');
       
-      doc.fillColor('#000000').fontSize(12).text(`TOTAL DE DEMANDAS ATENDIDAS NO PERÍODO: ${totals.totalDemands}`, 50, 100);
+      const dashY = 120;
+      doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(12).text('INDICADORES DE PERFORMANCE', 50, dashY);
+      
+      // KPI Boxes (Center Aligned)
+      const boxWidth = 200;
+      const spacing = 40;
+      const startX = (612 - (boxWidth * 2 + spacing)) / 2;
+
+      doc.rect(startX, dashY + 20, boxWidth, 60).fill('#f1f5f9');
+      doc.fillColor('#64748b').fontSize(8).text('TOTAL DE DEMANDAS', startX + 10, dashY + 30);
+      doc.fillColor('#0f172a').fontSize(20).text(String(totals.totalDemands), startX + 10, dashY + 45);
+
+      const itemsUsed = Object.values(totals.used).reduce((sum: number, m: any) => sum + m.quantity, 0);
+      doc.rect(startX + boxWidth + spacing, dashY + 20, boxWidth, 60).fill('#f1f5f9');
+      doc.fillColor('#64748b').fontSize(8).text('TOTAL ITENS UTILIZADOS', startX + boxWidth + spacing + 10, dashY + 30);
+      doc.fillColor('#0284c7').fontSize(20).text(String(itemsUsed), startX + boxWidth + spacing + 10, dashY + 45);
+
+      doc.moveDown(6);
+
+      // --- GRÁFICO DE BARRAS: TOP MATERIAIS ---
+      doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(12).text('CONSUMO POR CATEGORIA DE MATERIAL (TOP 10)', 50);
       doc.moveDown(1);
 
-      doc.font('Helvetica-Bold').fontSize(12).fillColor('#0284c7').text('TOTAL DE MATERIAIS UTILIZADOS NA SEMANA:');
-      doc.moveDown(0.5);
-      doc.fillColor('#000000');
-      const usedSorted = Object.values(totals.used).sort((a: any, b: any) => a.name.localeCompare(b.name));
-      if (usedSorted.length === 0) {
-        doc.font('Helvetica').fontSize(10).text('Nenhum material utilizado no período.');
-      } else {
-        // Simple 2-column layout for summary
-        let col = 0;
-        let startY = doc.y;
-        usedSorted.forEach((m: any, index) => {
-          if (index > 0 && index % 20 === 0) {
-            doc.addPage();
-            startY = 50;
-          }
-          const text = `• ${String(m.quantity).padStart(3, '0')} ${m.unit || 'un'} - ${m.name}`;
-          doc.font('Helvetica').fontSize(9).text(text, col === 0 ? 50 : 320, startY + (index % 20) * 12);
-          if (index % 2 === 1) {} // just logical split
+      const usedSorted = Object.values(totals.used).sort((a: any, b: any) => b.quantity - a.quantity).slice(0, 10);
+      
+      if (usedSorted.length > 0) {
+        const chartX = 180;
+        const chartWidth = 350;
+        const barHeight = 15;
+        const gap = 8;
+        const maxQty = Math.max(...usedSorted.map((m: any) => m.quantity));
+
+        usedSorted.forEach((m: any) => {
+          const y = doc.y;
+          // Label
+          doc.fillColor('#334155').font('Helvetica').fontSize(8).text(m.name, 50, y + 4, { width: 120, align: 'right' });
+          
+          // Background Bar
+          doc.rect(chartX, y, chartWidth, barHeight).fill('#f1f5f9');
+          
+          // Value Bar
+          const barWidth = (m.quantity / maxQty) * chartWidth;
+          doc.rect(chartX, y, barWidth, barHeight).fill('#0284c7');
+          
+          // Value Label
+          doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(7).text(String(m.quantity), chartX + 5, y + 4);
+
+          doc.moveDown(1.5);
         });
-        doc.moveDown(Math.ceil(usedSorted.length / 2) * 0.5 + 1);
+      } else {
+        doc.font('Helvetica').fontSize(10).text('Nenhum dado de material disponível para o gráfico.', 50);
       }
 
-      doc.moveDown(1.5);
-      doc.font('Helvetica-Bold').fontSize(12).fillColor('#b91c1c').text('TOTAL DE MATERIAIS DANIFICADOS RECOLHIDOS:');
-      doc.moveDown(0.5);
-      doc.fillColor('#000000');
-      const returnedSorted = Object.values(totals.returned).sort((a: any, b: any) => a.name.localeCompare(b.name));
-      if (returnedSorted.length === 0) {
-        doc.font('Helvetica').fontSize(10).text('Nenhum material danificado registrado.');
-      } else {
-        returnedSorted.forEach((m: any) => {
-          doc.font('Helvetica').fontSize(10).text(`• ${String(m.quantity).padStart(3, '0')} ${m.unit || 'un'} - ${m.name}`);
-        });
-      }
+      doc.moveDown(2);
+
+      // Detailed list if needed (on new page if lot of items)
+      if (usedSorted.length > 5) doc.addPage();
+      
+      doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(12).text('DETALHAMENTO DE MATERIAIS UTILIZADOS', 50);
+      doc.moveDown(1);
+      
+      const fullUsedSorted = Object.values(totals.used).sort((a: any, b: any) => a.name.localeCompare(b.name));
+      fullUsedSorted.forEach((m: any) => {
+        const lineY = doc.y;
+        doc.fillColor('#475569').font('Helvetica').fontSize(9).text(`• ${m.name}`, 60, lineY);
+        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(9).text(`${m.quantity} ${m.unit || 'un'}`, 480, lineY, { align: 'right', width: 80 });
+        doc.moveDown(0.3);
+        if (doc.y > 680) doc.addPage();
+      });
 
       // Signatures at the end
       doc.font('Helvetica').fontSize(10);
       const signY = 700;
       doc.text('__________________________', 50, signY, { width: 150, align: 'center' });
-      doc.text('COORDENADOR DE ELÉTRICA', 50, signY + 15, { width: 150, align: 'center' });
+      doc.text('COORDENADOR DE ELETRICIDADE', 50, signY + 15, { width: 150, align: 'center' });
       
       doc.text('__________________________', 230, signY, { width: 150, align: 'center' });
       doc.text('SECRETÁRIO DE INFRA', 230, signY + 15, { width: 150, align: 'center' });
@@ -329,7 +385,7 @@ export class ReportController {
           spacing: { before: 200 }
         }));
         children.push(new Paragraph({
-          children: [new TextRun({ text: `DESCRIÇÃO: ${d.description}`, italic: true, size: 20 })]
+          children: [new TextRun({ text: `DESCRIÇÃO: ${d.description}`, italics: true, size: 20 })]
         }));
         children.push(new Paragraph({
           children: [new TextRun({ text: `EQUIPE: ${d.electricians.map((e: any) => e.name).join(', ')}`, size: 20 })]
