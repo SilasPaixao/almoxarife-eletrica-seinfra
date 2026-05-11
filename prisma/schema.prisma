@@ -42,7 +42,6 @@ model User {
 model Material {
   id          String   @id @default(uuid())
   name        String
-  unit        String   @default("un") // Added unit field
   imageUrl    String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
