@@ -81,6 +81,9 @@ export class ReportController {
         orderBy: { date: 'asc' }
       });
 
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename=relatorio-${start}.pdf`);
+
       const doc = new PDFDocument({ 
         margin: 50,
         info: {
@@ -88,36 +91,44 @@ export class ReportController {
           Author: 'SISTEMA SEINFRA',
         }
       });
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename=relatorio-${start}.pdf`);
+
       doc.pipe(res);
 
       try {
+        console.log('[ReportController] Starting PDF generation...');
         // --- CAPA PROFISSIONAL ---
         // Background Accent (Top Header - White for Logo Contrast)
         doc.rect(0, 0, 612, 180).fill('#FFFFFF');
         
         try {
-          const logoResponse = await axios.get('https://i.postimg.cc/W3n0DdqH/pref-logo-sha.png', { responseType: 'arraybuffer', timeout: 5000 });
+          const logoUrl = 'https://i.postimg.cc/W3n0DdqH/pref-logo-sha.png';
+          console.log('[ReportController] Fetching logo from:', logoUrl);
+          const logoResponse = await axios.get(logoUrl, { 
+            responseType: 'arraybuffer', 
+            timeout: 8000,
+            headers: { 'User-Agent': 'Mozilla/5.0' } 
+          });
           doc.image(logoResponse.data, 236, 30, { width: 140 });
+          console.log('[ReportController] Logo loaded successfully');
         } catch (e) {
-          console.warn('Could not load logo for PDF:', e instanceof Error ? e.message : e);
+          console.warn('[ReportController] Could not load logo for PDF:', e instanceof Error ? e.message : e);
         }
 
-        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(26).text('RELATÓRIO SEMANAL', 0, 155, { align: 'center', characterSpacing: 1 });
-        doc.fontSize(16).text('ALMOXARIFADO DE MANUTENÇÃO ELÉTRICA', 0, 190, { align: 'center', characterSpacing: 0.5 });
+        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(26).text('RELATÓRIO SEMANAL', 0, 155, { align: 'center', width: 612, characterSpacing: 1 });
+        doc.fontSize(16).text('ALMOXARIFADO DE MANUTENÇÃO ELÉTRICA', 0, 190, { align: 'center', width: 612, characterSpacing: 0.5 });
         
-        doc.fillColor('#475569').font('Helvetica-Bold').fontSize(14).text(`PERÍODO: ${start} À ${end}`, 0, 240, { align: 'center' });
+        doc.fillColor('#475569').font('Helvetica-Bold').fontSize(14).text(`PERÍODO: ${start} À ${end}`, 0, 240, { align: 'center', width: 612 });
         
         doc.rect(180, 265, 252, 3).fill('#0284c7');
         
         // Cover details
-        doc.fillColor('#64748b').font('Helvetica').fontSize(11).text('SECRETARIA DE INFRAESTRUTURA - SEINFRA', 0, 710, { align: 'center' });
-        doc.font('Helvetica-Bold').fillColor('#0f172a').text(format(new Date(), "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR }).toUpperCase(), 0, 730, { align: 'center' });
+        doc.fillColor('#64748b').font('Helvetica').fontSize(11).text('SECRETARIA DE INFRAESTRUTURA - SEINFRA', 0, 710, { align: 'center', width: 612 });
+        doc.font('Helvetica-Bold').fillColor('#0f172a').text(format(new Date(), "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR }).toUpperCase(), 0, 730, { align: 'center', width: 612 });
         
         doc.addPage();
 
       // --- CONTEÚDO DAS DEMANDAS ---
+      console.log('[ReportController] Generating demand pages...');
       const totals: any = { used: {}, returned: {}, totalDemands: demands.length };
       doc.fillColor('#000000'); // Reset color
 
@@ -147,7 +158,7 @@ export class ReportController {
           doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(11).text(`${format(new Date(d.date), 'dd/MM/yyyy')} - ${d.location}`, 60, startY + 6);
           doc.moveDown(0.8);
           
-          doc.fillColor('#334155').font('Helvetica-Oblique').fontSize(10).text(`Descrição: ${d.description}`, { lineGap: 2 });
+          doc.fillColor('#334155').font('Helvetica').fontSize(10).text(`Descrição: ${d.description || 'Sem descrição'}`, { lineGap: 2 });
           doc.moveDown(0.5);
 
           // Details Section
@@ -172,7 +183,6 @@ export class ReportController {
             ...d.returnedMaterials.map((m: any) => m.materialId)
           ]);
 
-          doc.fillColor('#000000').font('Helvetica').fontSize(8);
           allMaterialIds.forEach((mId: any) => {
             if (doc.y > 750) {
               doc.addPage();
@@ -185,7 +195,6 @@ export class ReportController {
               doc.text('UTILIZ.', 430, newTableY + 4);
               doc.text('SOBRA', 480, newTableY + 4);
               doc.moveDown(0.8);
-              doc.fillColor('#000000').font('Helvetica').fontSize(8);
             }
 
             const pm = d.plannedMaterials.find((m: any) => m.materialId === mId);
@@ -194,6 +203,7 @@ export class ReportController {
             const material = pm?.material || um?.material || rm?.material;
 
             const lineY = doc.y;
+            doc.fillColor('#000000').font('Helvetica').fontSize(8);
             doc.text(material?.name || 'Material Desconhecido', 60, lineY);
             doc.text(`${pm?.quantity || 0} ${material?.unit || ''}`, 380, lineY);
             doc.text(`${um?.quantity || 0} ${material?.unit || ''}`, 430, lineY);
@@ -238,9 +248,10 @@ export class ReportController {
       }
 
       // --- DASHBOARD DE RESUMO GERAL ---
+      console.log('[ReportController] Generating dashboard...');
       // Header matching cleaner style
       doc.rect(0, 0, 612, 100).fill('#FFFFFF');
-      doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(18).text('DASHBOARD SEMANAL - INTELIGÊNCIA OPERACIONAL', 0, 40, { align: 'center' });
+      doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(18).text('DASHBOARD SEMANAL - INTELIGÊNCIA OPERACIONAL', 0, 40, { align: 'center', width: 612 });
       doc.rect(150, 70, 312, 2).fill('#0284c7');
       
       const dashY = 120;
@@ -266,34 +277,34 @@ export class ReportController {
       doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(12).text('CONSUMO POR CATEGORIA DE MATERIAL (TOP 10)', 50);
       doc.moveDown(1);
 
-        const usedSorted = Object.values(totals.used).sort((a: any, b: any) => b.quantity - a.quantity).slice(0, 10);
-        
-        if (usedSorted.length > 0) {
-          const chartX = 180;
-          const chartWidth = 350;
-          const barHeight = 15;
-          const maxQty = Math.max(...usedSorted.map((m: any) => m.quantity)) || 1;
+      const usedSorted = Object.values(totals.used).sort((a: any, b: any) => b.quantity - a.quantity).slice(0, 10);
+      
+      if (usedSorted.length > 0) {
+        const chartX = 180;
+        const chartWidth = 350;
+        const barHeight = 15;
+        const maxQty = Math.max(...usedSorted.map((m: any) => m.quantity)) || 1;
 
-          usedSorted.forEach((m: any) => {
-            const y = doc.y;
-            // Label
-            doc.fillColor('#334155').font('Helvetica').fontSize(8).text(m.name, 50, y + 4, { width: 120, align: 'right' });
-            
-            // Background Bar
-            doc.rect(chartX, y, chartWidth, barHeight).fill('#f1f5f9');
-            
-            // Value Bar
-            const barWidth = Math.max(0, (m.quantity / maxQty) * chartWidth);
-            doc.rect(chartX, y, barWidth, barHeight).fill('#0284c7');
-            
-            // Value Label
-            doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(7).text(String(m.quantity), chartX + 5, y + 4);
+        usedSorted.forEach((m: any) => {
+          const y = doc.y;
+          // Label
+          doc.fillColor('#334155').font('Helvetica').fontSize(8).text(m.name, 50, y + 4, { width: 120, align: 'right' });
+          
+          // Background Bar
+          doc.rect(chartX, y, chartWidth, barHeight).fill('#f1f5f9');
+          
+          // Value Bar
+          const barWidth = Math.max(0, (m.quantity / maxQty) * chartWidth);
+          doc.rect(chartX, y, barWidth, barHeight).fill('#0284c7');
+          
+          // Value Label
+          doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(7).text(String(m.quantity), chartX + 5, y + 4);
 
-            doc.moveDown(1.5);
-          });
-        } else {
-          doc.font('Helvetica').fontSize(10).text('Nenhum dado de material disponível para o gráfico.', 50);
-        }
+          doc.moveDown(1.5);
+        });
+      } else {
+        doc.font('Helvetica').fontSize(10).text('Nenhum dado de material disponível para o gráfico.', 50);
+      }
 
       doc.moveDown(2);
 
@@ -313,6 +324,8 @@ export class ReportController {
       });
 
       // Signatures at the end
+      if (doc.y > 650) doc.addPage();
+
       doc.font('Helvetica').fontSize(10);
       const signY = 700;
       doc.text('__________________________', 50, signY, { width: 150, align: 'center' });
@@ -324,14 +337,14 @@ export class ReportController {
       doc.text('__________________________', 410, signY, { width: 150, align: 'center' });
       doc.text('ALMOXARIFE / RESPONSÁVEL', 410, signY + 15, { width: 150, align: 'center' });
 
+      console.log('[ReportController] PDF generation completed');
       doc.end();
-      } catch (pdfError) {
-        console.error('Error generating PDF content:', pdfError);
-        // We can't use res.status here if headers are already sent
-        if (!res.headersSent) {
-          res.status(500).json({ error: 'Error generating PDF content', details: String(pdfError) });
-        }
-        doc.end(); // Try to close it anyway
+      } catch (pdfError: any) {
+        console.error('[ReportController] Error generating PDF content:', pdfError);
+        // If we haven't piped anything yet or if we can still send an error
+        // But doc.pipe(res) was already called. 
+        // We can't do much here except closing the doc.
+        doc.end(); 
       }
     } catch (error) {
       console.error('[ReportController.downloadPdf] Outer Error:', error);
