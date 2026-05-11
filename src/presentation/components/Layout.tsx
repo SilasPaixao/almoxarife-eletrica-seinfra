@@ -11,6 +11,8 @@ import {
   X, 
   Home,
   CheckCircle,
+  Truck,
+  Ruler,
   Clock
 } from 'lucide-react';
 
@@ -23,6 +25,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { name: 'Início', path: '/', icon: Home },
     { name: 'Demandas', path: '/admin/demands', icon: ClipboardList },
     { name: 'Materiais', path: '/admin/materials', icon: Package },
+    { name: 'Veículos', path: '/admin/vehicles', icon: Truck },
+    { name: 'Escadas', path: '/admin/ladders', icon: Ruler },
     { name: 'Usuários', path: '/admin/users', icon: Users },
     { name: 'Relatórios', path: '/admin/reports', icon: FileText },
   ] : [

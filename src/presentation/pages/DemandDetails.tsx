@@ -15,6 +15,7 @@ import {
   Loader2, 
   AlertCircle,
   Truck,
+  Ruler,
   Info,
   Pencil,
   Plus,
@@ -25,6 +26,7 @@ import {
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import Modal from '../components/Modal.tsx';
+import ConfirmDialog from '../components/ConfirmDialog.tsx';
 
 export default function DemandDetails() {
   const { id } = useParams();
@@ -32,15 +34,29 @@ export default function DemandDetails() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  const [confirmDialog, setConfirmDialog] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {}
+  });
 
   const [photo, setPhoto] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [usedMaterials, setUsedMaterials] = useState<any[]>([]);
   const [replacedMaterials, setReplacedMaterials] = useState<any[]>([]);
   const [vehicles, setVehicles] = useState<string[]>([]);
+  const [ladder, setLadder] = useState('');
   const [trafo, setTrafo] = useState('');
   const [obs, setObs] = useState('');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+
+  // Material Autocomplete States for Completion Form
+  const [usedMaterialSearch, setUsedMaterialSearch] = useState('');
+  const [showUsedResults, setShowUsedResults] = useState(false);
+  const [replacedMaterialSearch, setReplacedMaterialSearch] = useState('');
+  const [showReplacedResults, setShowReplacedResults] = useState(false);
 
   // Edit Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -49,11 +65,21 @@ export default function DemandDetails() {
     location: '',
     description: '',
     clientNumber: '',
-    electricianId: '',
-    materials: [] as { materialId: string; quantity: number }[]
+    electricianIds: [] as string[],
+    materials: [] as { materialId: string; quantity: number }[],
+    transformerNumber: '',
+    observation: '',
+    vehicles: [] as string[],
+    ladder: '',
+    usedMaterials: [] as { materialId: string; quantity: number }[],
+    returnedMaterials: [] as { materialId: string; quantity: number }[]
   });
   const [materialSearch, setMaterialSearch] = useState('');
   const [showMaterialResults, setShowMaterialResults] = useState(false);
+  const [editUsedSearch, setEditUsedSearch] = useState('');
+  const [showEditUsedResults, setShowEditUsedResults] = useState(false);
+  const [editRetSearch, setEditRetSearch] = useState('');
+  const [showEditRetResults, setShowEditRetResults] = useState(false);
 
   const { data: demand, isLoading } = useQuery({
     queryKey: ['demand', id],
@@ -70,8 +96,37 @@ export default function DemandDetails() {
     queryFn: async () => {
       const resp = await api.get('/users');
       return resp.data.filter((u: any) => u.role === 'ELECTRICIAN' && u.status === 'APPROVED');
-    }
+    },
+    enabled: !!user && user.role === 'ADMIN'
   });
+
+  const { data: registeredVehicles } = useQuery({
+    queryKey: ['vehicles'],
+    queryFn: async () => (await api.get('/vehicles')).data,
+  });
+
+  const { data: registeredLadders } = useQuery({
+    queryKey: ['ladders'],
+    queryFn: async () => (await api.get('/ladders')).data,
+  });
+
+  // Calculate surplus materials (planned - used)
+  const surplusMaterials = React.useMemo(() => {
+    if (!demand?.plannedMaterials) return [];
+    
+    return demand.plannedMaterials.map((pm: any) => {
+      const used = usedMaterials.find(um => um.materialId === pm.materialId);
+      const usedQty = used ? used.quantity : 0;
+      const surplusQty = pm.quantity - usedQty;
+      
+      return {
+        ...pm.material,
+        plannedQty: pm.quantity,
+        usedQty,
+        surplusQty: Math.max(0, surplusQty)
+      };
+    }).filter((m: any) => m.surplusQty > 0);
+  }, [demand?.plannedMaterials, usedMaterials]);
 
   const filteredMaterials = materials?.filter((m: any) => 
     m.name.toLowerCase().includes(materialSearch.toLowerCase())
@@ -120,6 +175,25 @@ export default function DemandDetails() {
     }
   });
 
+  const declineMutation = useMutation({
+    mutationFn: async () => await api.put(`/demands/${id}`, { status: 'PENDING' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['demands'] });
+      queryClient.invalidateQueries({ queryKey: ['demand', id] });
+      setFeedback({ type: 'success', message: 'Serviço reprovado. Retornou para o eletricista.' });
+      setTimeout(() => setFeedback(null), 3000);
+    }
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => await api.delete(`/demands/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['demands'] });
+      setFeedback({ type: 'success', message: 'Demanda excluída com sucesso!' });
+      setTimeout(() => navigate('/'), 1500);
+    }
+  });
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -132,12 +206,16 @@ export default function DemandDetails() {
     if (!matId) return;
     if (usedMaterials.find(m => m.materialId === matId)) return;
     setUsedMaterials([...usedMaterials, { materialId: matId, quantity: 1 }]);
+    setUsedMaterialSearch('');
+    setShowUsedResults(false);
   };
 
   const handleAddReplacedMaterial = (matId: string) => {
     if (!matId) return;
     if (replacedMaterials.find(m => m.materialId === matId)) return;
     setReplacedMaterials([...replacedMaterials, { materialId: matId, quantity: 1 }]);
+    setReplacedMaterialSearch('');
+    setShowReplacedResults(false);
   };
 
   const handleVehicleToggle = (v: string) => {
@@ -158,12 +236,17 @@ export default function DemandDetails() {
       setFeedback({ type: 'error', message: 'Informe o veículo/equipamento utilizado!' });
       return;
     }
+    if (!ladder) {
+      setFeedback({ type: 'error', message: 'Informe a escada utilizada!' });
+      return;
+    }
 
     const formData = new FormData();
     formData.append('photo', photo);
     formData.append('usedMaterials', JSON.stringify(usedMaterials));
     formData.append('replacedMaterials', JSON.stringify(replacedMaterials));
     formData.append('vehicles', vehicles.join(','));
+    formData.append('ladder', ladder);
     formData.append('transformerNumber', trafo);
     formData.append('observation', obs);
 
@@ -177,10 +260,22 @@ export default function DemandDetails() {
       location: demand.location,
       description: demand.description,
       clientNumber: demand.clientNumber || '',
-      electricianId: demand.electricianId,
+      electricianIds: demand.electricians?.map((e: any) => e.id) || [],
       materials: demand.plannedMaterials?.map((pm: any) => ({
         materialId: pm.materialId,
         quantity: pm.quantity
+      })) || [],
+      transformerNumber: demand.transformerNumber || '',
+      observation: demand.observation || '',
+      vehicles: demand.vehicles || [],
+      ladder: demand.ladder || '',
+      usedMaterials: demand.usedMaterials?.map((um: any) => ({
+        materialId: um.materialId,
+        quantity: um.quantity
+      })) || [],
+      returnedMaterials: demand.returnedMaterials?.filter((rm: any) => rm.type === 'DEFECTIVE').map((rm: any) => ({
+        materialId: rm.materialId,
+        quantity: rm.quantity
       })) || []
     });
     setIsEditModalOpen(true);
@@ -232,7 +327,34 @@ export default function DemandDetails() {
         <button onClick={() => navigate(-1)} className="flex items-center text-gray-500 hover:text-gray-700">
           <ArrowLeft className="h-5 w-5 mr-1" /> Voltar
         </button>
-        <StatusBadge status={demand.status} />
+        <div className="flex items-center gap-3">
+          {user?.role === 'ADMIN' && (
+            <div className="flex gap-2">
+              <button
+                onClick={handleEditClick}
+                className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors border border-transparent hover:border-blue-100"
+                title="Editar Demanda"
+              >
+                <Pencil className="h-5 w-5" />
+              </button>
+              <button
+                onClick={() => {
+                  setConfirmDialog({
+                    isOpen: true,
+                    title: 'Excluir Demanda',
+                    message: 'Tem certeza que deseja excluir esta demanda definitivamente?',
+                    onConfirm: () => deleteMutation.mutate()
+                  });
+                }}
+                className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100"
+                title="Excluir Demanda"
+              >
+                <Trash2 className="h-5 w-5" />
+              </button>
+            </div>
+          )}
+          <StatusBadge status={demand.status} />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -265,6 +387,19 @@ export default function DemandDetails() {
                   </div>
                 </div>
               )}
+              <div className="flex items-start">
+                <User className="h-5 w-5 text-blue-500 mr-3 mt-0.5" />
+                <div>
+                  <p className="text-xs text-gray-500 uppercase font-bold">Responsáveis</p>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {demand.electricians?.map((e: any) => (
+                      <span key={e.id} className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-xs font-medium border border-blue-100">
+                        {e.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="mt-8 border-t pt-6">
@@ -292,7 +427,7 @@ export default function DemandDetails() {
 
         {/* Action Form / Completion Summary */}
         <div className="lg:col-span-2">
-          {!isDone && isElectrician ? (
+          {demand.status === 'PENDING' && isElectrician ? (
             <form onSubmit={handleSubmit} className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 space-y-8">
               <h2 className="text-2xl font-bold text-gray-900 border-b pb-4">Concluir Serviço</h2>
               
@@ -316,64 +451,156 @@ export default function DemandDetails() {
               </div>
 
               {/* Used Materials */}
-              <div>
+              <div className="relative">
                 <label className="block text-sm font-bold text-gray-700 mb-4">Materiais Utilizados (Obrigatório)</label>
-                <select 
-                  className="w-full p-3 border border-gray-300 rounded-xl mb-4 bg-gray-50"
-                  onChange={(e) => handleAddUsedMaterial(e.target.value)}
-                  value=""
-                >
-                  <option value="">Adicionar Material Utilizado...</option>
-                  {materials?.map((m: any) => (
-                    <option key={m.id} value={m.id}>{m.name}</option>
-                  ))}
-                </select>
+                <div className="relative mb-4">
+                  <Search className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
+                  <input
+                    type="text"
+                    className="w-full pl-10 p-3 border border-gray-300 rounded-xl bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Pesquisar material utilizado..."
+                    value={usedMaterialSearch}
+                    onChange={(e) => {
+                      setUsedMaterialSearch(e.target.value);
+                      setShowUsedResults(true);
+                    }}
+                    onFocus={() => setShowUsedResults(true)}
+                  />
+                  
+                  {showUsedResults && usedMaterialSearch && (
+                    <div className="absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-xl max-h-60 overflow-y-auto">
+                      {materials?.filter((m: any) => m.name.toLowerCase().includes(usedMaterialSearch.toLowerCase())).map((m: any) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          className="w-full text-left p-3 hover:bg-gray-50 flex items-center justify-between border-b border-gray-50 last:border-0"
+                          onClick={() => {
+                            handleAddUsedMaterial(m.id);
+                            setUsedMaterialSearch('');
+                            setShowUsedResults(false);
+                          }}
+                        >
+                          <span className="text-sm text-gray-700">{m.name}</span>
+                          <Plus className="h-4 w-4 text-gray-400" />
+                        </button>
+                      ))}
+                    </div>
+                   )}
+                </div>
+
                 <div className="space-y-2">
                   {usedMaterials.map(m => {
                     const material = materials?.find((mat: any) => mat.id === m.materialId);
                     return (
                       <div key={m.materialId} className="flex items-center justify-between p-3 bg-blue-50 rounded-xl border border-blue-100">
                         <span className="text-sm font-medium">{material?.name}</span>
-                        <input 
-                          type="number" 
-                          min="1" 
-                          className="w-20 p-2 border border-blue-200 rounded-lg text-center"
-                          value={m.quantity}
-                          onChange={(e) => setUsedMaterials(prev => prev.map(item => item.materialId === m.materialId ? { ...item, quantity: parseInt(e.target.value) } : item))}
-                        />
+                        <div className="flex items-center gap-3">
+                          <input 
+                            type="number" 
+                            min="1" 
+                            className="w-20 p-2 border border-blue-200 rounded-lg text-center"
+                            value={m.quantity}
+                            onChange={(e) => setUsedMaterials(prev => prev.map(item => item.materialId === m.materialId ? { ...item, quantity: parseInt(e.target.value) || 0 } : item))}
+                          />
+                          <button 
+                            type="button"
+                            onClick={() => setUsedMaterials(prev => prev.filter(item => item.materialId !== m.materialId))}
+                            className="text-red-500 hover:text-red-700"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
                 </div>
               </div>
 
+              {/* Surplus Materials Disclosure */}
+              {surplusMaterials.length > 0 && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-6">
+                  <h3 className="text-sm font-bold text-yellow-800 mb-3 flex items-center uppercase">
+                    <AlertCircle className="h-4 w-4 mr-2" /> Materiais para Retorno (Sobra)
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {surplusMaterials.map((m: any) => (
+                      <div key={m.id} className="flex justify-between items-center p-2 bg-white rounded-lg border border-yellow-100 text-sm">
+                        <span className="text-gray-700 font-medium">{m.name}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-400">Restante:</span>
+                          <span className="font-bold text-yellow-700">{m.surplusQty} {m.unit || 'un'}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-yellow-600 mt-3 italic">
+                    * Estes materiais constam no planejamento mas não foram marcados como utilizados. Eles serão registrados automaticamente como materiais retornados.
+                  </p>
+                </div>
+              )}
+
               {/* Replaced Materials */}
-              <div>
+              <div className="relative">
                 <label className="block text-sm font-bold text-gray-700 mb-2">Materiais Retornados / Defeituosos</label>
                 <p className="text-xs text-gray-500 mb-4">Informe o que foi removido/substituído.</p>
-                <select 
-                  className="w-full p-3 border border-gray-300 rounded-xl mb-4 bg-gray-50"
-                  onChange={(e) => handleAddReplacedMaterial(e.target.value)}
-                  value=""
-                >
-                  <option value="">Adicionar Material Substituído...</option>
-                  {materials?.map((m: any) => (
-                    <option key={m.id} value={m.id}>{m.name}</option>
-                  ))}
-                </select>
+                
+                <div className="relative mb-4">
+                  <Search className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
+                  <input
+                    type="text"
+                    className="w-full pl-10 p-3 border border-gray-300 rounded-xl bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Pesquisar material substituído..."
+                    value={replacedMaterialSearch}
+                    onChange={(e) => {
+                      setReplacedMaterialSearch(e.target.value);
+                      setShowReplacedResults(true);
+                    }}
+                    onFocus={() => setShowReplacedResults(true)}
+                  />
+                  
+                  {showReplacedResults && replacedMaterialSearch && (
+                    <div className="absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-xl max-h-60 overflow-y-auto">
+                      {materials?.filter((m: any) => m.name.toLowerCase().includes(replacedMaterialSearch.toLowerCase())).map((m: any) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          className="w-full text-left p-3 hover:bg-gray-50 flex items-center justify-between border-b border-gray-50 last:border-0"
+                          onClick={() => {
+                            handleAddReplacedMaterial(m.id);
+                            setReplacedMaterialSearch('');
+                            setShowReplacedResults(false);
+                          }}
+                        >
+                          <span className="text-sm text-gray-700">{m.name}</span>
+                          <Plus className="h-4 w-4 text-gray-400" />
+                        </button>
+                      ))}
+                    </div>
+                   )}
+                </div>
+
                 <div className="space-y-2">
                   {replacedMaterials.map(m => {
                     const material = materials?.find((mat: any) => mat.id === m.materialId);
                     return (
                       <div key={m.materialId} className="flex items-center justify-between p-3 bg-red-50 rounded-xl border border-red-100">
                         <span className="text-sm font-medium">{material?.name}</span>
-                        <input 
-                          type="number" 
-                          min="1" 
-                          className="w-20 p-2 border border-red-200 rounded-lg text-center"
-                          value={m.quantity}
-                          onChange={(e) => setReplacedMaterials(prev => prev.map(item => item.materialId === m.materialId ? { ...item, quantity: parseInt(e.target.value) } : item))}
-                        />
+                        <div className="flex items-center gap-3">
+                          <input 
+                            type="number" 
+                            min="1" 
+                            className="w-20 p-2 border border-red-200 rounded-lg text-center"
+                            value={m.quantity}
+                            onChange={(e) => setReplacedMaterials(prev => prev.map(item => item.materialId === m.materialId ? { ...item, quantity: parseInt(e.target.value) } : item))}
+                          />
+                          <button 
+                            type="button"
+                            onClick={() => setReplacedMaterials(prev => prev.filter(item => item.materialId !== m.materialId))}
+                            className="text-red-500 hover:text-red-700"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
@@ -384,20 +611,47 @@ export default function DemandDetails() {
               <div>
                 <label className="block text-sm font-bold text-gray-700 mb-4">Veículo / Equipamento (Obrigatório)</label>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                  {['Fiat Strada', 'Caminhão Munck', 'Caminhão Cesto', 'Escada', 'Gerador'].map(v => (
+                  {registeredVehicles?.map((v: any) => (
                     <button
-                      key={v}
+                      key={v.id}
                       type="button"
-                      onClick={() => handleVehicleToggle(v)}
+                      onClick={() => handleVehicleToggle(v.name)}
                       className={`
                         p-3 rounded-xl border-2 text-sm font-medium transition-all flex items-center justify-center
-                        ${vehicles.includes(v) ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-200 text-gray-600 hover:border-blue-300'}
+                        ${vehicles.includes(v.name) ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-200 text-gray-600 hover:border-blue-300'}
                       `}
                     >
-                      <Truck className={`h-4 w-4 mr-2 ${vehicles.includes(v) ? 'text-white' : 'text-gray-400'}`} />
-                      {v}
+                      <Truck className={`h-4 w-4 mr-2 ${vehicles.includes(v.name) ? 'text-white' : 'text-gray-400'}`} />
+                      {v.name}
                     </button>
                   ))}
+                  {registeredVehicles?.length === 0 && (
+                    <p className="col-span-full text-sm text-gray-400 italic">Nenhum veículo cadastrado pelo sistema.</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Ladder Selection */}
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-4">Escada Utilizada (Obrigatório)</label>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {registeredLadders?.map((l: any) => (
+                    <button
+                      key={l.id}
+                      type="button"
+                      onClick={() => setLadder(l.name)}
+                      className={`
+                        p-3 rounded-xl border-2 text-sm font-medium transition-all flex items-center justify-center
+                        ${ladder === l.name ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-200 text-gray-600 hover:border-blue-300'}
+                      `}
+                    >
+                      <Ruler className={`h-4 w-4 mr-2 ${ladder === l.name ? 'text-white' : 'text-gray-400'}`} />
+                      {l.name}
+                    </button>
+                  ))}
+                  {registeredLadders?.length === 0 && (
+                    <p className="col-span-full text-sm text-gray-400 italic">Nenhuma escada cadastrada pelo sistema.</p>
+                  )}
                 </div>
               </div>
 
@@ -442,12 +696,28 @@ export default function DemandDetails() {
               <div className="flex justify-between items-center border-b pb-4">
                 <h2 className="text-2xl font-bold text-gray-900">Resumo da Execução</h2>
                 {user?.role === 'ADMIN' && demand.status === 'PENDING_APPROVAL' && (
-                  <button 
-                    onClick={() => approveMutation.mutate()}
-                    className="bg-purple-600 text-white px-6 py-2 rounded-xl font-bold hover:bg-purple-700 flex items-center"
-                  >
-                    <CheckCircle className="h-5 w-5 mr-2" /> APROVAR CONCLUSÃO
-                  </button>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => {
+                        setConfirmDialog({
+                          isOpen: true,
+                          title: 'Reprovar Execução',
+                          message: 'Reprovar execução e retornar para o eletricista?',
+                          variant: 'warning',
+                          onConfirm: () => declineMutation.mutate()
+                        });
+                      }}
+                      className="bg-red-50 text-red-600 px-4 py-2 rounded-xl font-bold hover:bg-red-100 transition-colors flex items-center border border-red-100"
+                    >
+                      REPROVAR
+                    </button>
+                    <button 
+                      onClick={() => approveMutation.mutate()}
+                      className="bg-purple-600 text-white px-6 py-2 rounded-xl font-bold hover:bg-purple-700 flex items-center shadow-lg shadow-purple-200"
+                    >
+                      <CheckCircle className="h-5 w-5 mr-2" /> APROVAR
+                    </button>
+                  </div>
                 )}
               </div>
 
@@ -492,6 +762,14 @@ export default function DemandDetails() {
                       </span>
                     ))}
                   </div>
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-gray-800 mb-4 uppercase">Escada Utilizada</h3>
+                  {demand.ladder ? (
+                    <span className="px-3 py-1 bg-orange-50 text-orange-700 rounded-lg text-sm font-medium border border-orange-200">
+                      {demand.ladder}
+                    </span>
+                  ) : <p className="text-gray-500 text-sm italic">Nenhuma escada informada.</p>}
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-gray-800 mb-4 uppercase">Outras Informações</h3>
@@ -563,19 +841,29 @@ export default function DemandDetails() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Eletricista Responsável</label>
-                <select
-                  required
-                  className="w-full p-2 border border-gray-300 rounded-lg text-sm"
-                  value={editFormData.electricianId}
-                  onChange={(e) => setEditFormData({...editFormData, electricianId: e.target.value})}
-                >
-                  <option value="">Selecione...</option>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Eletricistas Responsáveis</label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-3 border border-gray-300 rounded-lg max-h-40 overflow-y-auto">
                   {electricians?.map((e: any) => (
-                    <option key={e.id} value={e.id}>{e.name}</option>
+                    <label key={e.id} className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer border border-transparent hover:border-gray-100">
+                      <input
+                        type="checkbox"
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        checked={editFormData.electricianIds.includes(e.id)}
+                        onChange={(evt) => {
+                          const newIds = evt.target.checked
+                            ? [...editFormData.electricianIds, e.id]
+                            : editFormData.electricianIds.filter(id => id !== e.id);
+                          setEditFormData({...editFormData, electricianIds: newIds});
+                        }}
+                      />
+                      <span className="text-xs text-gray-700 truncate" title={e.name}>{e.name}</span>
+                    </label>
                   ))}
-                </select>
+                </div>
+                {editFormData.electricianIds.length === 0 && (
+                  <p className="text-red-500 text-[10px] mt-1 font-medium">* Selecione pelo menos um eletricista.</p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Contato do Solicitante</label>
@@ -588,14 +876,13 @@ export default function DemandDetails() {
               </div>
             </div>
 
-            <div className="border-t pt-4">
-              <h3 className="text-sm font-bold text-gray-800 mb-4 flex items-center">
-                <Package className="h-4 w-4 mr-2" /> Materiais Planejados
-              </h3>
-              
-              <div className="relative">
-                <div className="flex gap-2 mb-4">
-                  <div className="relative flex-1">
+            <div className="border-t pt-4 space-y-6">
+              <div>
+                <h3 className="text-sm font-bold text-gray-800 mb-4 flex items-center">
+                  <Package className="h-4 w-4 mr-2" /> Materiais Planejados
+                </h3>
+                <div className="relative mb-4">
+                  <div className="relative">
                     <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
                     <input
                       type="text"
@@ -609,54 +896,270 @@ export default function DemandDetails() {
                       onFocus={() => setShowMaterialResults(true)}
                     />
                   </div>
+                  {showMaterialResults && materialSearch && (
+                    <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-40 overflow-y-auto">
+                      {filteredMaterials?.map((m: any) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          className="w-full text-left p-2 hover:bg-gray-50 flex items-center justify-between border-b border-gray-50 last:border-0"
+                          onClick={() => {
+                            handleAddMaterial(m.id);
+                            setMaterialSearch('');
+                            setShowMaterialResults(false);
+                          }}
+                        >
+                          <span className="text-sm text-gray-700">{m.name}</span>
+                          <Plus className="h-4 w-4 text-gray-400" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  {editFormData.materials.map((m) => {
+                    const material = materials?.find((mat: any) => mat.id === m.materialId);
+                    return (
+                      <div key={m.materialId} className="flex items-center justify-between bg-gray-50 p-2 rounded-lg border border-gray-200">
+                        <span className="text-sm font-medium text-gray-700">{material?.name}</span>
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="number"
+                            min="1"
+                            className="w-16 p-1 border border-gray-300 rounded text-center text-sm"
+                            value={m.quantity}
+                            onChange={(e) => updateMaterialQty(m.materialId, parseInt(e.target.value))}
+                          />
+                          <button type="button" onClick={() => removeMaterial(m.materialId)} className="text-red-500 hover:text-red-700">
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Execution Data (Visible for admins) */}
+              <div className="border-t pt-4 space-y-6">
+                <h3 className="text-sm font-bold text-gray-800 flex items-center uppercase">
+                  <CheckCircle className="h-4 w-4 mr-2" /> Dados da Execução
+                </h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Número do Trafo</label>
+                    <input
+                      type="text"
+                      className="w-full p-2 border border-gray-300 rounded-lg text-sm"
+                      value={editFormData.transformerNumber}
+                      onChange={(e) => setEditFormData({...editFormData, transformerNumber: e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Observação</label>
+                    <input
+                      type="text"
+                      className="w-full p-2 border border-gray-300 rounded-lg text-sm"
+                      value={editFormData.observation}
+                      onChange={(e) => setEditFormData({...editFormData, observation: e.target.value})}
+                    />
+                  </div>
                 </div>
 
-                {showMaterialResults && materialSearch && (
-                  <div className="absolute z-10 w-full -mt-3 mb-4 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 overflow-y-auto">
-                    {filteredMaterials?.map((m: any) => (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Veículos</label>
+                  <div className="flex flex-wrap gap-2">
+                    {registeredVehicles?.map((v: any) => (
                       <button
-                        key={m.id}
+                        key={v.id}
                         type="button"
-                        className="w-full text-left p-3 hover:bg-gray-50 flex items-center justify-between border-b border-gray-50 last:border-0"
                         onClick={() => {
-                          handleAddMaterial(m.id);
-                          setMaterialSearch('');
-                          setShowMaterialResults(false);
+                          const exists = editFormData.vehicles.includes(v.name);
+                          setEditFormData({
+                            ...editFormData,
+                            vehicles: exists 
+                              ? editFormData.vehicles.filter(name => name !== v.name)
+                              : [...editFormData.vehicles, v.name]
+                          });
                         }}
+                        className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                          editFormData.vehicles.includes(v.name)
+                            ? 'bg-blue-600 border-blue-600 text-white'
+                            : 'bg-white border-gray-300 text-gray-600 hover:border-blue-400'
+                        }`}
                       >
-                        <span className="text-sm text-gray-700">{m.name}</span>
-                        <Plus className="h-4 w-4 text-gray-400" />
+                        {v.name}
                       </button>
                     ))}
                   </div>
-                )}
-              </div>
+                </div>
 
-              <div className="space-y-2">
-                {editFormData.materials.map((m) => {
-                  const material = materials?.find((mat: any) => mat.id === m.materialId);
-                  return (
-                    <div key={m.materialId} className="flex items-center justify-between bg-gray-50 p-3 rounded-lg border border-gray-200">
-                      <span className="text-sm font-medium text-gray-700">{material?.name}</span>
-                      <div className="flex items-center gap-4">
-                        <input
-                          type="number"
-                          min="1"
-                          className="w-16 p-1 border border-gray-300 rounded text-center text-sm"
-                          value={m.quantity}
-                          onChange={(e) => updateMaterialQty(m.materialId, parseInt(e.target.value))}
-                        />
-                        <button 
-                          type="button"
-                          onClick={() => removeMaterial(m.materialId)}
-                          className="text-red-500 hover:text-red-700"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Escada Utilizada</label>
+                  <div className="flex flex-wrap gap-2">
+                    {registeredLadders?.map((l: any) => (
+                      <button
+                        key={l.id}
+                        type="button"
+                        onClick={() => setEditFormData({ ...editFormData, ladder: l.name })}
+                        className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                          editFormData.ladder === l.name
+                            ? 'bg-orange-600 border-orange-600 text-white'
+                            : 'bg-white border-gray-300 text-gray-600 hover:border-orange-400'
+                        }`}
+                      >
+                        {l.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Used Materials in Edit */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Materiais Utilizados</label>
+                  <div className="relative mb-2">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+                      <input
+                        type="text"
+                        className="w-full pl-10 p-2 border border-gray-300 rounded-lg text-sm"
+                        placeholder="Adicionar material utilizado..."
+                        value={editUsedSearch}
+                        onChange={(e) => {
+                          setEditUsedSearch(e.target.value);
+                          setShowEditUsedResults(true);
+                        }}
+                        onFocus={() => setShowEditUsedResults(true)}
+                      />
                     </div>
-                  );
-                })}
+                    {showEditUsedResults && editUsedSearch && (
+                      <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-40 overflow-y-auto">
+                        {materials?.filter((m: any) => m.name.toLowerCase().includes(editUsedSearch.toLowerCase())).map((m: any) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            className="w-full text-left p-2 hover:bg-gray-50 flex items-center justify-between border-b border-gray-50 last:border-0"
+                            onClick={() => {
+                              if (!editFormData.usedMaterials.find(x => x.materialId === m.id)) {
+                                setEditFormData({
+                                  ...editFormData,
+                                  usedMaterials: [...editFormData.usedMaterials, { materialId: m.id, quantity: 1 }]
+                                });
+                              }
+                              setEditUsedSearch('');
+                              setShowEditUsedResults(false);
+                            }}
+                          >
+                            <span className="text-sm text-gray-700">{m.name}</span>
+                            <Plus className="h-4 w-4 text-gray-400" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    {editFormData.usedMaterials.map(m => {
+                      const mat = materials?.find((x: any) => x.id === m.materialId);
+                      return (
+                        <div key={m.materialId} className="flex items-center justify-between bg-blue-50/50 p-2 rounded-lg text-xs">
+                          <span>{mat?.name}</span>
+                          <div className="flex items-center gap-2">
+                            <input 
+                              type="number" 
+                              className="w-12 p-1 border rounded text-center" 
+                              value={m.quantity}
+                              onChange={(e) => setEditFormData({
+                                ...editFormData,
+                                usedMaterials: editFormData.usedMaterials.map(x => x.materialId === m.materialId ? { ...x, quantity: parseInt(e.target.value) } : x)
+                              })}
+                            />
+                            <button 
+                              type="button"
+                              onClick={() => setEditFormData({...editFormData, usedMaterials: editFormData.usedMaterials.filter(x => x.materialId !== m.materialId)})}
+                              className="text-red-500"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Returned Materials in Edit */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Materiais Substituídos</label>
+                  <div className="relative mb-2">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+                      <input
+                        type="text"
+                        className="w-full pl-10 p-2 border border-gray-300 rounded-lg text-sm"
+                        placeholder="Adicionar material substituído..."
+                        value={editRetSearch}
+                        onChange={(e) => {
+                          setEditRetSearch(e.target.value);
+                          setShowEditRetResults(true);
+                        }}
+                        onFocus={() => setShowEditRetResults(true)}
+                      />
+                    </div>
+                    {showEditRetResults && editRetSearch && (
+                      <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-40 overflow-y-auto">
+                        {materials?.filter((m: any) => m.name.toLowerCase().includes(editRetSearch.toLowerCase())).map((m: any) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            className="w-full text-left p-2 hover:bg-gray-50 flex items-center justify-between border-b border-gray-50 last:border-0"
+                            onClick={() => {
+                              if (!editFormData.returnedMaterials.find(x => x.materialId === m.id)) {
+                                setEditFormData({
+                                  ...editFormData,
+                                  returnedMaterials: [...editFormData.returnedMaterials, { materialId: m.id, quantity: 1 }]
+                                });
+                              }
+                              setEditRetSearch('');
+                              setShowEditRetResults(false);
+                            }}
+                          >
+                            <span className="text-sm text-gray-700">{m.name}</span>
+                            <Plus className="h-4 w-4 text-gray-400" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    {editFormData.returnedMaterials.map(m => {
+                      const mat = materials?.find((x: any) => x.id === m.materialId);
+                      return (
+                        <div key={m.materialId} className="flex items-center justify-between bg-red-50/50 p-2 rounded-lg text-xs">
+                          <span>{mat?.name}</span>
+                          <div className="flex items-center gap-2">
+                            <input 
+                              type="number" 
+                              className="w-12 p-1 border rounded text-center" 
+                              value={m.quantity}
+                              onChange={(e) => setEditFormData({
+                                ...editFormData,
+                                returnedMaterials: editFormData.returnedMaterials.map(x => x.materialId === m.materialId ? { ...x, quantity: parseInt(e.target.value) } : x)
+                              })}
+                            />
+                            <button 
+                              type="button"
+                              onClick={() => setEditFormData({...editFormData, returnedMaterials: editFormData.returnedMaterials.filter(x => x.materialId !== m.materialId)})}
+                              className="text-red-500"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -693,16 +1196,23 @@ export default function DemandDetails() {
           </span>
         </button>
       )}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        variant={(confirmDialog as any).variant}
+        onClose={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
+        onConfirm={confirmDialog.onConfirm}
+      />
     </Layout>
   );
 }
 
 function StatusBadge({ status }: { status: string }) {
   const configs: any = {
-    PLANNED: { color: 'bg-yellow-100 text-yellow-800', label: 'Planejada' },
-    IN_PROGRESS: { color: 'bg-blue-100 text-blue-800', label: 'Em Execução' },
-    PENDING_APPROVAL: { color: 'bg-green-100 text-green-800', label: 'Aguardando Aprovação' },
-    CONCLUDED: { color: 'bg-purple-100 text-purple-800', label: 'Executada' },
+    PENDING: { color: 'bg-yellow-100 text-yellow-800', label: 'Pendente' },
+    PENDING_APPROVAL: { color: 'bg-blue-100 text-blue-800', label: 'Em Aprovação' },
+    CONCLUDED: { color: 'bg-green-100 text-green-800', label: 'Executada' },
   };
 
   const config = configs[status] || { color: 'bg-gray-100 text-gray-800', label: status };

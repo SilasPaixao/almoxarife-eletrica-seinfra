@@ -11,6 +11,7 @@ demandRouter.use(authMiddleware as any);
 demandRouter.get('/', DemandController.getAll as any);
 demandRouter.post('/', adminMiddleware as any, DemandController.create as any);
 demandRouter.put('/:id', adminMiddleware as any, DemandController.update as any);
+demandRouter.delete('/:id', adminMiddleware as any, DemandController.delete as any);
 demandRouter.patch('/:id/approve', adminMiddleware as any, DemandController.approve as any);
 
 demandRouter.post('/bulk', adminMiddleware as any, DemandController.bulkCreate as any);

@@ -8,6 +8,8 @@ import { materialRouter } from './src/infra/http/routes/material.routes.ts';
 import { demandRouter } from './src/infra/http/routes/demand.routes.ts';
 import { userRouter } from './src/infra/http/routes/user.routes.ts';
 import { reportRouter } from './src/infra/http/routes/report.routes.ts';
+import { vehicleRouter } from './src/infra/http/routes/vehicle.routes.ts';
+import { ladderRouter } from './src/infra/http/routes/ladder.routes.ts';
 
 dotenv.config();
 
@@ -23,6 +25,8 @@ app.use('/api/users', userRouter);
 app.use('/api/materials', materialRouter);
 app.use('/api/demands', demandRouter);
 app.use('/api/reports', reportRouter);
+app.use('/api/vehicles', vehicleRouter);
+app.use('/api/ladders', ladderRouter);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

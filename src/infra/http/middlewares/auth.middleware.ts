@@ -33,3 +33,12 @@ export const adminMiddleware = (req: AuthRequest, res: Response, next: NextFunct
   }
   next();
 };
+
+export const roleMiddleware = (roles: ('ADMIN' | 'ELECTRICIAN')[]) => {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    next();
+  };
+};

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Layout from '../../components/Layout.tsx';
 import Modal from '../../components/Modal.tsx';
+import ConfirmDialog from '../../components/ConfirmDialog.tsx';
 import api from '../../services/api.ts';
 import { Plus, Edit, Trash2, Camera, X, Loader2, Save, Package } from 'lucide-react';
 
@@ -12,6 +13,10 @@ export default function Materials() {
   const [formData, setFormData] = useState({ name: '' });
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState({
+    isOpen: false,
+    materialId: ''
+  });
 
   const { data: materials, isLoading } = useQuery({
     queryKey: ['materials'],
@@ -114,7 +119,7 @@ export default function Materials() {
                     <Edit className="h-5 w-5" />
                   </button>
                   <button 
-                    onClick={() => { if(confirm('Excluir material?')) deleteMutation.mutate(material.id) }} 
+                    onClick={() => setConfirmDialog({ isOpen: true, materialId: material.id })} 
                     className="p-2 bg-white rounded-full text-red-600 hover:scale-110 transition-transform"
                   >
                     <Trash2 className="h-5 w-5" />
@@ -214,6 +219,14 @@ export default function Materials() {
           </div>
         </form>
       </Modal>
+
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title="Excluir Material"
+        message="Tem certeza que deseja excluir este material?"
+        onClose={() => setConfirmDialog({ isOpen: false, materialId: '' })}
+        onConfirm={() => deleteMutation.mutate(confirmDialog.materialId)}
+      />
     </Layout>
   );
 }

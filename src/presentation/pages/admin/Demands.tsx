@@ -3,23 +3,39 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Layout from '../../components/Layout.tsx';
 import Modal from '../../components/Modal.tsx';
 import api from '../../services/api.ts';
-import { Plus, Search, FileDown, Upload, X, Loader2, Calendar, MapPin, User, ClipboardList, Trash2, Package } from 'lucide-react';
+import { Plus, Search, FileDown, Upload, X, Loader2, Calendar, MapPin, User, ClipboardList, Trash2, Package, Pencil } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import * as XLSX from 'xlsx';
+import { CheckCircle, AlertCircle } from 'lucide-react';
+
+import ConfirmDialog from '../../components/ConfirmDialog.tsx';
 
 export default function Demands() {
   const queryClient = useQueryClient();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingDemand, setEditingDemand] = useState<any | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+  
+  const showFeedback = (type: 'success' | 'error', message: string) => {
+    setFeedback({ type, message });
+    setTimeout(() => setFeedback(null), 4000);
+  };
+  
+  const [confirmDialog, setConfirmDialog] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {}
+  });
   
   const [formData, setFormData] = useState({
     date: format(new Date(), 'yyyy-MM-dd'),
     location: '',
     description: '',
     clientNumber: '',
-    electricianId: '',
+    electricianIds: [] as string[],
     materials: [] as { materialId: string; quantity: number }[]
   });
 
@@ -83,7 +99,7 @@ export default function Demands() {
       location: '',
       description: '',
       clientNumber: '',
-      electricianId: '',
+      electricianIds: [],
       materials: []
     });
   };
@@ -95,7 +111,7 @@ export default function Demands() {
       location: demand.location,
       description: demand.description,
       clientNumber: demand.clientNumber || '',
-      electricianId: demand.electricianId,
+      electricianIds: demand.electricians?.map((e: any) => e.id) || [],
       materials: demand.plannedMaterials?.map((pm: any) => ({
         materialId: pm.materialId,
         quantity: pm.quantity
@@ -157,37 +173,69 @@ export default function Demands() {
             location: item['Local'] || item['local'] || 'Não especificado',
             description: item['Descrição'] || item['descricao'] || 'Sem descrição',
             clientNumber: item['Número Cliente']?.toString() || item['numero_cliente']?.toString() || '',
-            electricianId: electrician?.id || users?.find((u: any) => u.role === 'ELECTRICIAN')?.id
+            electricianIds: electrician ? [electrician.id] : (users?.find((u: any) => u.role === 'ELECTRICIAN') ? [users?.find((u: any) => u.role === 'ELECTRICIAN')?.id] : [])
           };
-        }).filter(d => d.electricianId);
+        }).filter(d => d.electricianIds.length > 0);
 
         if (mappedDemands.length === 0) {
-          alert('Nenhuma demanda válida encontrada para importação. Verifique se os eletricistas estão cadastrados.');
+          showFeedback('error', 'Nenhuma demanda válida encontrada para importação. Verifique se os eletricistas estão cadastrados.');
           return;
         }
 
-        if (confirm(`Deseja importar ${mappedDemands.length} demandas?`)) {
-          await api.post('/demands/bulk', { demands: mappedDemands });
-          queryClient.invalidateQueries({ queryKey: ['demands'] });
-          alert('Importação concluída com sucesso!');
-        }
+        setConfirmDialog({
+          isOpen: true,
+          title: 'Confirmar Importação',
+          message: `Deseja importar ${mappedDemands.length} demandas?`,
+          onConfirm: async () => {
+            try {
+              await api.post('/demands/bulk', { demands: mappedDemands });
+              queryClient.invalidateQueries({ queryKey: ['demands'] });
+              showFeedback('success', 'Importação concluída com sucesso!');
+            } catch (error) {
+              console.error('Import error:', error);
+              showFeedback('error', 'Erro ao importar Excel.');
+            }
+          }
+        });
       } catch (error) {
         console.error('Import error:', error);
-        alert('Erro ao importar Excel. Verifique o formato do arquivo.');
+        showFeedback('error', 'Erro ao importar Excel. Verifique o formato do arquivo.');
       }
     };
     reader.readAsBinaryString(file);
     e.target.value = '';
   };
 
-  const filteredDemands = demands?.filter((d: any) => 
-    d.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    d.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    d.electrician?.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const [activeTab, setActiveTab] = useState<'PENDING' | 'PENDING_APPROVAL' | 'CONCLUDED'>('PENDING');
+
+  const deleteDemandMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/demands/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['demands'] });
+    }
+  });
+
+  const filteredDemands = demands?.filter((d: any) => {
+    const matchesSearch = 
+      d.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      d.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      d.electricians?.some((e: any) => e.name.toLowerCase().includes(searchTerm.toLowerCase()));
+    
+    return d.status === activeTab && matchesSearch;
+  });
 
   return (
     <Layout>
+      {/* Feedback Message */}
+      {feedback && (
+        <div className={`fixed top-4 right-4 z-[100] p-4 rounded-lg shadow-lg flex items-center gap-3 animate-in fade-in slide-in-from-top-4 duration-300 ${
+          feedback.type === 'success' ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-800'
+        }`}>
+          {feedback.type === 'success' ? <CheckCircle className="h-5 w-5" /> : <AlertCircle className="h-5 w-5" />}
+          <span className="font-medium">{feedback.message}</span>
+        </div>
+      )}
+
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Demandas</h1>
@@ -206,6 +254,33 @@ export default function Demands() {
             <Plus className="h-5 w-5 mr-2" /> Nova Demanda
           </button>
         </div>
+      </div>
+
+      <div className="flex gap-4 mb-6 border-b border-gray-200">
+        <button
+          onClick={() => setActiveTab('PENDING')}
+          className={`pb-2 px-1 text-sm font-bold uppercase tracking-wider transition-colors ${
+            activeTab === 'PENDING' ? 'border-b-2 border-yellow-500 text-yellow-600' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Pendentes
+        </button>
+        <button
+          onClick={() => setActiveTab('PENDING_APPROVAL')}
+          className={`pb-2 px-1 text-sm font-bold uppercase tracking-wider transition-colors ${
+            activeTab === 'PENDING_APPROVAL' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Em Aprovação
+        </button>
+        <button
+          onClick={() => setActiveTab('CONCLUDED')}
+          className={`pb-2 px-1 text-sm font-bold uppercase tracking-wider transition-colors ${
+            activeTab === 'CONCLUDED' ? 'border-b-2 border-green-600 text-green-600' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Executadas
+        </button>
       </div>
 
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6 flex items-center">
@@ -244,18 +319,39 @@ export default function Demands() {
                     <div className="text-xs text-gray-500 truncate max-w-xs">{demand.description}</div>
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-600">
-                    {demand.electrician?.name}
+                    <div className="flex flex-wrap gap-1">
+                      {demand.electricians?.map((e: any) => (
+                        <span key={e.id} className="bg-gray-100 px-2 py-0.5 rounded text-xs">
+                          {e.name}
+                        </span>
+                      ))}
+                    </div>
                   </td>
                   <td className="px-6 py-4">
                     <StatusBadge status={demand.status} />
                   </td>
                   <td className="px-6 py-4 text-right">
-                    <button 
-                      onClick={() => handleEditDemand(demand)}
-                      className="text-blue-600 hover:text-blue-800 text-sm font-medium"
-                    >
-                      Editar
-                    </button>
+                    <div className="flex justify-end gap-3">
+                      <button 
+                        onClick={() => handleEditDemand(demand)}
+                        className="text-blue-600 hover:text-blue-800"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setConfirmDialog({
+                            isOpen: true,
+                            title: 'Excluir Demanda',
+                            message: 'Tem certeza que deseja excluir esta demanda definitivamente?',
+                            onConfirm: () => deleteDemandMutation.mutate(demand.id)
+                          });
+                        }}
+                        className="text-red-500 hover:text-red-700"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -323,20 +419,31 @@ export default function Demands() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Eletricista Responsável</label>
-              <select
-                required
-                className="w-full p-2 border border-gray-300 rounded-lg text-sm"
-                value={formData.electricianId}
-                onChange={(e) => setFormData({...formData, electricianId: e.target.value})}
-              >
-                <option value="">Selecione...</option>
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Eletricistas Responsáveis</label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-3 border border-gray-300 rounded-lg max-h-40 overflow-y-auto">
                 {electricians?.map((e: any) => (
-                  <option key={e.id} value={e.id}>{e.name}</option>
+                  <label key={e.id} className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer border border-transparent hover:border-gray-100">
+                    <input
+                      type="checkbox"
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      checked={formData.electricianIds.includes(e.id)}
+                      onChange={(evt) => {
+                        const newIds = evt.target.checked
+                          ? [...formData.electricianIds, e.id]
+                          : formData.electricianIds.filter(id => id !== e.id);
+                        setFormData({...formData, electricianIds: newIds});
+                      }}
+                    />
+                    <span className="text-xs text-gray-700 truncate" title={e.name}>{e.name}</span>
+                  </label>
                 ))}
-              </select>
+              </div>
+              {formData.electricianIds.length === 0 && (
+                <p className="text-red-500 text-[10px] mt-1 font-medium">* Selecione pelo menos um eletricista.</p>
+              )}
             </div>
+            
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Contato do Solicitante</label>
               <input
@@ -464,16 +571,23 @@ export default function Demands() {
           </div>
         </form>
       </Modal>
+
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        onClose={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
+        onConfirm={confirmDialog.onConfirm}
+      />
     </Layout>
   );
 }
 
 function StatusBadge({ status }: { status: string }) {
   const configs: any = {
-    PLANNED: { color: 'bg-yellow-100 text-yellow-800', label: 'Planejada' },
-    IN_PROGRESS: { color: 'bg-blue-100 text-blue-800', label: 'Em Execução' },
-    PENDING_APPROVAL: { color: 'bg-green-100 text-green-800', label: 'Aguardando Aprovação' },
-    CONCLUDED: { color: 'bg-purple-100 text-purple-800', label: 'Executada' },
+    PENDING: { color: 'bg-yellow-100 text-yellow-800', label: 'Pendente' },
+    PENDING_APPROVAL: { color: 'bg-blue-100 text-blue-800', label: 'Em Aprovação' },
+    CONCLUDED: { color: 'bg-green-100 text-green-800', label: 'Executada' },
   };
 
   const config = configs[status] || { color: 'bg-gray-100 text-gray-800', label: status };

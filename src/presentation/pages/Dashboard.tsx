@@ -1,6 +1,7 @@
 import { useAuth } from '../context/AuthContext.tsx';
 import Layout from '../components/Layout.tsx';
 import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import api from '../services/api.ts';
 import { ClipboardList, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -18,11 +19,17 @@ export default function Dashboard() {
     }
   });
 
+  const [activeTab, setActiveTab] = useState<'PENDING' | 'PENDING_APPROVAL' | 'CONCLUDED'>('PENDING');
+
   const stats = [
-    { name: 'Pendentes', value: demands?.filter((d: any) => d.status === 'PLANNED').length || 0, icon: Clock, color: 'text-yellow-600', bg: 'bg-yellow-100' },
-    { name: 'Em Execução', value: demands?.filter((d: any) => d.status === 'IN_PROGRESS').length || 0, icon: Clock, color: 'text-blue-600', bg: 'bg-blue-100' },
+    { name: 'Pendentes', value: demands?.filter((d: any) => d.status === 'PENDING').length || 0, icon: Clock, color: 'text-yellow-600', bg: 'bg-yellow-100' },
+    { name: 'Em Aprovação', value: demands?.filter((d: any) => d.status === 'PENDING_APPROVAL').length || 0, icon: AlertTriangle, color: 'text-blue-600', bg: 'bg-blue-100' },
     { name: 'Executadas', value: demands?.filter((d: any) => d.status === 'CONCLUDED').length || 0, icon: CheckCircle, color: 'text-green-600', bg: 'bg-green-100' },
   ];
+
+  const filteredDemands = demands?.filter((d: any) => {
+    return d.status === activeTab;
+  });
 
   return (
     <Layout>
@@ -46,10 +53,33 @@ export default function Dashboard() {
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-          <h2 className="text-lg font-bold text-gray-900">
-            {user?.role === 'ADMIN' ? 'Todas as Demandas' : 'Minhas Demandas'}
-          </h2>
+        <div className="p-6 border-b border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex flex-wrap gap-4">
+            <button
+              onClick={() => setActiveTab('PENDING')}
+              className={`pb-1 text-lg font-bold transition-colors ${
+                activeTab === 'PENDING' ? 'border-b-2 border-yellow-500 text-yellow-600' : 'text-gray-400 hover:text-gray-600'
+              }`}
+            >
+              Pendentes
+            </button>
+            <button
+              onClick={() => setActiveTab('PENDING_APPROVAL')}
+              className={`pb-1 text-lg font-bold transition-colors ${
+                activeTab === 'PENDING_APPROVAL' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-400 hover:text-gray-600'
+              }`}
+            >
+              Em Aprovação
+            </button>
+            <button
+              onClick={() => setActiveTab('CONCLUDED')}
+              className={`pb-1 text-lg font-bold transition-colors ${
+                activeTab === 'CONCLUDED' ? 'border-b-2 border-green-600 text-green-600' : 'text-gray-400 hover:text-gray-600'
+              }`}
+            >
+              Executadas
+            </button>
+          </div>
           <Link to={user?.role === 'ADMIN' ? '/admin/demands' : '/'} className="text-blue-600 text-sm font-medium hover:underline">
             Ver tudo
           </Link>
@@ -59,10 +89,10 @@ export default function Dashboard() {
           <div className="p-8 text-center text-gray-500">Carregando demandas...</div>
         ) : (
           <div className="divide-y divide-gray-100">
-            {demands?.length === 0 ? (
-              <div className="p-8 text-center text-gray-500">Nenhuma demanda encontrada.</div>
+            {filteredDemands?.length === 0 ? (
+              <div className="p-8 text-center text-gray-500">Nenhuma demanda encontrada nesta categoria.</div>
             ) : (
-              demands?.map((demand: any) => (
+              filteredDemands?.map((demand: any) => (
                 <Link 
                   key={demand.id} 
                   to={`/demands/${demand.id}`}
@@ -77,8 +107,12 @@ export default function Dashboard() {
                           <ClipboardList className="h-3 w-3 mr-1" />
                           {format(new Date(demand.date), "dd/MM/yyyy", { locale: ptBR })}
                         </span>
-                        {user?.role === 'ADMIN' && (
-                          <span className="bg-gray-100 px-2 py-0.5 rounded uppercase">{demand.electrician?.name}</span>
+                        {user?.role === 'ADMIN' && demand.electricians && (
+                          <div className="flex gap-1">
+                            {demand.electricians.map((e: any) => (
+                              <span key={e.id} className="bg-gray-100 px-2 py-0.5 rounded uppercase text-[10px]">{e.name}</span>
+                            ))}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -98,10 +132,9 @@ export default function Dashboard() {
 
 function StatusBadge({ status }: { status: string }) {
   const configs: any = {
-    PLANNED: { color: 'bg-yellow-100 text-yellow-800', label: 'Planejada' },
-    IN_PROGRESS: { color: 'bg-blue-100 text-blue-800', label: 'Em Execução' },
-    PENDING_APPROVAL: { color: 'bg-green-100 text-green-800', label: 'Aguardando Aprovação' },
-    CONCLUDED: { color: 'bg-purple-100 text-purple-800', label: 'Executada' },
+    PENDING: { color: 'bg-yellow-100 text-yellow-800', label: 'Pendente' },
+    PENDING_APPROVAL: { color: 'bg-blue-100 text-blue-800', label: 'Em Aprovação' },
+    CONCLUDED: { color: 'bg-green-100 text-green-800', label: 'Executada' },
   };
 
   const config = configs[status] || { color: 'bg-gray-100 text-gray-800', label: status };

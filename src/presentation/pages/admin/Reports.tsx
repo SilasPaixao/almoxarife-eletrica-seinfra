@@ -11,10 +11,24 @@ export default function Reports() {
     queryFn: async () => (await api.get('/reports/weekly')).data,
   });
 
-  const handleDownloadPdf = () => {
+  const handleDownloadPdf = async () => {
     if (!report) return;
-    const { start, end } = report.period;
-    window.open(`/api/reports/download/pdf?start=${start}&end=${end}`, '_blank');
+    try {
+      const { start, end } = report.period;
+      const response = await api.get(`/reports/download/pdf?start=${start}&end=${end}`, {
+        responseType: 'blob'
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `relatorio_semanal_${start.replace(/\//g, '-')}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (error) {
+      console.error('Erro ao baixar PDF:', error);
+      alert('Erro ao gerar o PDF. Verifique se você tem permissão.');
+    }
   };
 
   return (
@@ -40,7 +54,7 @@ export default function Reports() {
         </div>
       ) : (
         <div className="space-y-8">
-          <div className="bg-blue-600 text-white p-8 rounded-2xl shadow-lg relative overflow-hidden">
+          <div className="bg-blue-600 text-black p-8 rounded-2xl shadow-lg relative overflow-hidden">
             <div className="relative z-10">
               <h2 className="text-sm font-bold uppercase tracking-wider mb-2 opacity-80">Semana Atual</h2>
               <p className="text-3xl font-extrabold">{report?.period.start} — {report?.period.end}</p>
