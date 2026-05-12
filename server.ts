@@ -10,6 +10,7 @@ import { userRouter } from './src/infra/http/routes/user.routes.ts';
 import { reportRouter } from './src/infra/http/routes/report.routes.ts';
 import { vehicleRouter } from './src/infra/http/routes/vehicle.routes.ts';
 import { ladderRouter } from './src/infra/http/routes/ladder.routes.ts';
+import { recoveredRouter } from './src/infra/http/routes/recovered.routes.ts';
 
 dotenv.config();
 
@@ -27,6 +28,7 @@ app.use('/api/demands', demandRouter);
 app.use('/api/reports', reportRouter);
 app.use('/api/vehicles', vehicleRouter);
 app.use('/api/ladders', ladderRouter);
+app.use('/api/recovered', recoveredRouter);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -58,7 +60,6 @@ async function main() {
         status: 'APPROVED'
       }
     });
-    console.log('Admin Silas ensured: silas / 87304508');
 
     // Fallback admin
     const adminExists = await prisma.user.findUnique({
@@ -76,7 +77,6 @@ async function main() {
           status: 'APPROVED'
         }
       });
-      console.log('Initial default admin created: admin / admin123');
     }
 
     ViteExpress.listen(app, port, () => {

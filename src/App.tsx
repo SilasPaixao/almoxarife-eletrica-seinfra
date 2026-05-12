@@ -11,6 +11,7 @@ import DemandDetails from './presentation/pages/DemandDetails.tsx';
 import Reports from './presentation/pages/admin/Reports.tsx';
 import Vehicles from './presentation/pages/admin/Vehicles.tsx';
 import Ladders from './presentation/pages/admin/Ladders.tsx';
+import RecoveredMaterials from './presentation/pages/admin/RecoveredMaterials.tsx';
 import ProtectedRoute from './presentation/components/ProtectedRoute.tsx';
 
 const queryClient = new QueryClient();
@@ -35,6 +36,7 @@ export default function App() {
               <Route path="/admin/reports" element={<Reports />} />
               <Route path="/admin/vehicles" element={<Vehicles />} />
               <Route path="/admin/ladders" element={<Ladders />} />
+              <Route path="/admin/recovered" element={<RecoveredMaterials />} />
             </Route>
 
             <Route path="*" element={<Navigate to="/" replace />} />

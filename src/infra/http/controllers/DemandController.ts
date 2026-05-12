@@ -206,18 +206,23 @@ export class DemandController {
           }
 
           if (returnedMaterials) {
-            // Only delete and recreate DEFECTIVE ones
+            // Delete and recreate DEFECTIVE and RECOVERED ones
             await tx.returnedMaterial.deleteMany({ 
-              where: { demandId: id, type: 'DEFECTIVE' } 
+              where: { 
+                demandId: id, 
+                type: { in: ['DEFECTIVE', 'RECOVERED'] } 
+              } 
             });
             
+            const returnedToCreate = returnedMaterials.map((m: any) => ({
+              demandId: id,
+              materialId: m.materialId,
+              quantity: Number(m.quantity) || 0,
+              type: m.type || 'DEFECTIVE'
+            }));
+
             await tx.returnedMaterial.createMany({
-              data: returnedMaterials.map((m: any) => ({
-                demandId: id,
-                materialId: m.materialId,
-                quantity: Number(m.quantity) || 0,
-                type: 'DEFECTIVE'
-              }))
+              data: returnedToCreate
             });
           }
         }

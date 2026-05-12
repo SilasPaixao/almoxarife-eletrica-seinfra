@@ -72,7 +72,8 @@ export default function DemandDetails() {
     vehicles: [] as string[],
     ladder: '',
     usedMaterials: [] as { materialId: string; quantity: number }[],
-    returnedMaterials: [] as { materialId: string; quantity: number }[]
+    returnedMaterials: [] as { materialId: string; quantity: number }[],
+    recoveredMaterials: [] as { materialId: string; quantity: number }[]
   });
   const [materialSearch, setMaterialSearch] = useState('');
   const [showMaterialResults, setShowMaterialResults] = useState(false);
@@ -80,6 +81,8 @@ export default function DemandDetails() {
   const [showEditUsedResults, setShowEditUsedResults] = useState(false);
   const [editRetSearch, setEditRetSearch] = useState('');
   const [showEditRetResults, setShowEditRetResults] = useState(false);
+  const [editRecSearch, setEditRecSearch] = useState('');
+  const [showEditRecResults, setShowEditRecResults] = useState(false);
 
   const { data: demand, isLoading } = useQuery({
     queryKey: ['demand', id],
@@ -275,7 +278,13 @@ export default function DemandDetails() {
       })) || [],
       returnedMaterials: demand.returnedMaterials?.filter((rm: any) => rm.type === 'DEFECTIVE').map((rm: any) => ({
         materialId: rm.materialId,
-        quantity: rm.quantity
+        quantity: rm.quantity,
+        type: 'DEFECTIVE'
+      })) || [],
+      recoveredMaterials: demand.returnedMaterials?.filter((rm: any) => rm.type === 'RECOVERED').map((rm: any) => ({
+        materialId: rm.materialId,
+        quantity: rm.quantity,
+        type: 'RECOVERED'
       })) || []
     });
     setIsEditModalOpen(true);
@@ -738,15 +747,26 @@ export default function DemandDetails() {
                 <div>
                   <h3 className="text-sm font-bold text-gray-800 mb-4 uppercase">Relatório de Retorno</h3>
                   <div className="space-y-2">
-                    {demand.returnedMaterials?.map((m: any) => (
+                    {demand.returnedMaterials?.filter((m: any) => m.type !== 'RECOVERED').map((m: any) => (
                       <div key={m.id} className={`flex justify-between p-3 rounded-xl border text-sm ${m.type === 'DEFECTIVE' ? 'bg-red-50 border-red-100' : 'bg-gray-50 border-gray-100'}`}>
                         <div className="flex flex-col">
-                          <span className="font-medium">{m.material.name}</span>
+                          <span className="font-medium">{m.material?.name || m.materialName}</span>
                           <span className="text-[10px] uppercase font-bold text-gray-400">{m.type === 'DEFECTIVE' ? 'Substituído' : 'Não Utilizado'}</span>
                         </div>
                         <span className="font-bold flex items-center">{m.quantity}</span>
                       </div>
                     ))}
+                    {demand.returnedMaterials?.filter((m: any) => m.type === 'RECOVERED').length > 0 && (
+                      <div className="mt-4 pt-4 border-t border-gray-100">
+                        <h4 className="text-xs font-bold text-green-700 mb-2 uppercase">Materiais Recuperados</h4>
+                        {demand.returnedMaterials?.filter((m: any) => m.type === 'RECOVERED').map((m: any) => (
+                          <div key={m.id} className="flex justify-between p-3 bg-green-50 rounded-xl border border-green-100 text-sm mb-2">
+                            <span className="font-medium text-green-800">{m.material?.name || m.materialName}</span>
+                            <span className="font-bold text-green-700">{m.quantity}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {demand.returnedMaterials?.length === 0 && <p className="text-gray-500 text-sm italic">Nenhum material retornado.</p>}
                   </div>
                 </div>
@@ -795,7 +815,13 @@ export default function DemandDetails() {
           <form 
             onSubmit={(e) => { 
               e.preventDefault(); 
-              updateMutation.mutate(editFormData);
+              updateMutation.mutate({
+                ...editFormData,
+                returnedMaterials: [
+                  ...editFormData.returnedMaterials.map(m => ({ ...m, type: 'DEFECTIVE' })),
+                  ...editFormData.recoveredMaterials.map(m => ({ ...m, type: 'RECOVERED' }))
+                ]
+              });
             }} 
             className="p-6 space-y-6"
           >
@@ -1077,6 +1103,79 @@ export default function DemandDetails() {
                             <button 
                               type="button"
                               onClick={() => setEditFormData({...editFormData, usedMaterials: editFormData.usedMaterials.filter(x => x.materialId !== m.materialId)})}
+                              className="text-red-500"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Recovered Materials in Edit */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Materiais Recuperados (Consertados)</label>
+                  <div className="relative mb-2">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+                      <input
+                        type="text"
+                        className="w-full pl-10 p-2 border border-gray-300 rounded-lg text-sm"
+                        placeholder="Adicionar material recuperado..."
+                        value={editRecSearch}
+                        onChange={(e) => {
+                          setEditRecSearch(e.target.value);
+                          setShowEditRecResults(true);
+                        }}
+                        onFocus={() => setShowEditRecResults(true)}
+                      />
+                    </div>
+                    {showEditRecResults && editRecSearch && (
+                      <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-40 overflow-y-auto">
+                        {materials?.filter((m: any) => m.name.toLowerCase().includes(editRecSearch.toLowerCase())).map((m: any) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            className="w-full text-left p-2 hover:bg-gray-50 flex items-center justify-between border-b border-gray-50 last:border-0"
+                            onClick={() => {
+                              if (!editFormData.recoveredMaterials.find(x => x.materialId === m.id)) {
+                                setEditFormData({
+                                  ...editFormData,
+                                  recoveredMaterials: [...editFormData.recoveredMaterials, { materialId: m.id, quantity: 1 }]
+                                });
+                              }
+                              setEditRecSearch('');
+                              setShowEditRecResults(false);
+                            }}
+                          >
+                            <span className="text-sm text-gray-700">{m.name}</span>
+                            <Plus className="h-4 w-4 text-gray-400" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    {editFormData.recoveredMaterials.map(m => {
+                      const mat = materials?.find((x: any) => x.id === m.materialId);
+                      return (
+                        <div key={m.materialId} className="flex items-center justify-between bg-green-50/50 p-2 rounded-lg text-xs">
+                          <span>{mat?.name}</span>
+                          <div className="flex items-center gap-2">
+                            <input 
+                              type="number" 
+                              className="w-12 p-1 border rounded text-center" 
+                              value={m.quantity}
+                              onChange={(e) => setEditFormData({
+                                ...editFormData,
+                                recoveredMaterials: editFormData.recoveredMaterials.map(x => x.materialId === m.materialId ? { ...x, quantity: parseInt(e.target.value) } : x)
+                              })}
+                            />
+                            <button 
+                              type="button"
+                              onClick={() => setEditFormData({...editFormData, recoveredMaterials: editFormData.recoveredMaterials.filter(x => x.materialId !== m.materialId)})}
                               className="text-red-500"
                             >
                               <Trash2 className="h-3 w-3" />

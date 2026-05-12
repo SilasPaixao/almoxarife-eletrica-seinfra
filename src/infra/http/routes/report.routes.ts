@@ -7,7 +7,7 @@ const reportRouter = Router();
 reportRouter.use(authMiddleware as any);
 reportRouter.use(adminMiddleware as any);
 
-reportRouter.get('/weekly', ReportController.getWeekly as any);
+reportRouter.get('/data', ReportController.getReportData as any);
 reportRouter.get('/download/pdf', ReportController.downloadPdf as any);
 reportRouter.get('/download/docx', ReportController.downloadDocx as any);
 

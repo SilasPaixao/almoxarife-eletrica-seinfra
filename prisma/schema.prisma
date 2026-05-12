@@ -113,16 +113,19 @@ model UsedMaterial {
 enum ReturnType {
   NOT_USED
   DEFECTIVE
+  RECOVERED
 }
 
 model ReturnedMaterial {
-  id         String     @id @default(uuid())
-  demandId   String
-  demand     Demand     @relation(fields: [demandId], references: [id], onDelete: Cascade)
-  materialId String
-  material   Material   @relation(fields: [materialId], references: [id], onDelete: Cascade)
-  quantity   Int
+  id           String     @id @default(uuid())
+  demandId     String?
+  demand       Demand?    @relation(fields: [demandId], references: [id], onDelete: Cascade)
+  materialId   String?
+  material     Material?  @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  materialName String?
+  quantity     Int
   type       ReturnType
+  date       DateTime   @default(now())
 
   @@map("returned_materials")
 }

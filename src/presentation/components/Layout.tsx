@@ -13,7 +13,8 @@ import {
   CheckCircle,
   Truck,
   Ruler,
-  Clock
+  Clock,
+  RotateCw
 } from 'lucide-react';
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -25,6 +26,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { name: 'Início', path: '/', icon: Home },
     { name: 'Demandas', path: '/admin/demands', icon: ClipboardList },
     { name: 'Materiais', path: '/admin/materials', icon: Package },
+    { name: 'Materiais Recuperados', path: '/admin/recovered', icon: RotateCw },
     { name: 'Veículos', path: '/admin/vehicles', icon: Truck },
     { name: 'Escadas', path: '/admin/ladders', icon: Ruler },
     { name: 'Usuários', path: '/admin/users', icon: Users },

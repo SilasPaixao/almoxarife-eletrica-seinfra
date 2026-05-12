@@ -2,22 +2,33 @@ import { Response } from 'express';
 import prisma from '../../database/prisma.ts';
 import PDFDocument from 'pdfkit';
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType, ImageRun } from 'docx';
-import { startOfWeek, endOfWeek, format, subDays, startOfDay, endOfDay, parse } from 'date-fns';
+import { startOfWeek, endOfWeek, format, subDays, startOfDay, endOfDay, parse, startOfMonth, endOfMonth, startOfYear, endOfYear } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import axios from 'axios';
 import { AuthRequest } from '../middlewares/auth.middleware.ts';
 
 export class ReportController {
-  // ... (getWeekly remains mostly similar but let's ensure it's clean)
-  static async getWeekly(req: AuthRequest, res: Response) {
+  static async getReportData(req: AuthRequest, res: Response) {
     try {
+      const { range = 'weekly' } = req.query;
       const now = new Date();
-      const weekStart = startOfDay(startOfWeek(now, { weekStartsOn: 1 }));
-      const weekEnd = endOfDay(subDays(endOfWeek(now, { weekStartsOn: 1 }), 1)); 
+      let startRange, endRange;
+
+      if (range === 'monthly') {
+        startRange = startOfDay(startOfMonth(now));
+        endRange = endOfDay(endOfMonth(now));
+      } else if (range === 'yearly') {
+        startRange = startOfDay(startOfYear(now));
+        endRange = endOfDay(endOfYear(now));
+      } else {
+        // Weekly default
+        startRange = startOfDay(startOfWeek(now, { weekStartsOn: 1 }));
+        endRange = endOfDay(subDays(endOfWeek(now, { weekStartsOn: 1 }), 1));
+      }
 
       const demands = await prisma.demand.findMany({
         where: {
-          date: { gte: weekStart, lte: weekEnd },
+          date: { gte: startRange, lte: endRange },
           status: { in: ['CONCLUDED'] }
         },
         include: {
@@ -38,30 +49,42 @@ export class ReportController {
         return acc;
       }, {});
 
+      const standaloneRecovered = await prisma.returnedMaterial.findMany({
+        where: {
+          demandId: null,
+          type: 'RECOVERED',
+          date: { gte: startRange, lte: endRange }
+        },
+        include: { material: true }
+      });
+
       res.json({
         period: {
-          start: format(weekStart, 'dd/MM/yyyy'),
-          end: format(weekEnd, 'dd/MM/yyyy'),
+          type: range,
+          start: format(startRange, 'dd/MM/yyyy'),
+          end: format(endRange, 'dd/MM/yyyy'),
         },
-        data: grouped
+        data: grouped,
+        recovered: standaloneRecovered
       });
     } catch (error) {
-      console.error('[ReportController.getWeekly] Error:', error);
+      console.error('[ReportController.getReportData] Error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   }
 
   static async downloadPdf(req: AuthRequest, res: Response) {
     try {
-      const { start, end } = req.query;
+      const { start, end, range = 'weekly' } = req.query;
       
       if (!start || !end) {
         return res.status(400).json({ error: 'Start and end dates are required' });
       }
 
-      // Parse dd/MM/yyyy format
       const weekStart = startOfDay(parse(start as string, 'dd/MM/yyyy', new Date()));
       const weekEnd = endOfDay(parse(end as string, 'dd/MM/yyyy', new Date()));
+      
+      const reportTitle = range === 'yearly' ? 'RELATÓRIO ANUAL' : range === 'monthly' ? 'RELATÓRIO MENSAL' : 'RELATÓRIO SEMANAL';
 
       if (isNaN(weekStart.getTime()) || isNaN(weekEnd.getTime())) {
         return res.status(400).json({ error: 'Invalid date format. Use dd/MM/yyyy' });
@@ -81,15 +104,24 @@ export class ReportController {
         orderBy: { date: 'asc' }
       });
 
+      const standaloneRecovered = await prisma.returnedMaterial.findMany({
+        where: {
+          demandId: null,
+          type: 'RECOVERED',
+          date: { gte: weekStart, lte: weekEnd }
+        },
+        include: { material: true }
+      });
+
       const doc = new PDFDocument({ 
         margin: 50,
         info: {
-          Title: 'Relatório Semanal de Manutenção Elétrica',
+          Title: `${reportTitle} de Manutenção Elétrica`,
           Author: 'SISTEMA SEINFRA',
         }
       });
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename=relatorio-${start}.pdf`);
+      res.setHeader('Content-Disposition', `attachment; filename=relatorio-${range}-${start}.pdf`);
       doc.pipe(res);
 
       try {
@@ -104,7 +136,7 @@ export class ReportController {
           console.warn('Could not load logo for PDF:', e instanceof Error ? e.message : e);
         }
 
-        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(26).text('RELATÓRIO SEMANAL', 0, 155, { align: 'center', characterSpacing: 1 });
+        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(26).text(reportTitle, 0, 155, { align: 'center', characterSpacing: 1 });
         doc.fontSize(16).text('ALMOXARIFADO DE MANUTENÇÃO ELÉTRICA', 0, 190, { align: 'center', characterSpacing: 0.5 });
         
         doc.fillColor('#475569').font('Helvetica-Bold').fontSize(14).text(`PERÍODO: ${start} À ${end}`, 0, 240, { align: 'center' });
@@ -118,7 +150,21 @@ export class ReportController {
         doc.addPage();
 
       // --- CONTEÚDO DAS DEMANDAS ---
-      const totals: any = { used: {}, returned: {}, totalDemands: demands.length };
+      const totals: any = { used: {}, returned: {}, recovered: {}, totalDemands: demands.length };
+      
+      // Pre-populate recovered totals with standalone entries
+      standaloneRecovered.forEach((m: any) => {
+        const key = m.materialId || `MANUAL-${m.materialName}`;
+        if (!totals.recovered[key]) {
+          totals.recovered[key] = { 
+            name: m.material?.name || m.materialName, 
+            unit: m.material?.unit || 'un', 
+            quantity: 0 
+          };
+        }
+        totals.recovered[key].quantity += m.quantity;
+      });
+
       doc.fillColor('#000000'); // Reset color
 
       const grouped = demands.reduce((acc: any, demand: any) => {
@@ -209,7 +255,7 @@ export class ReportController {
           });
 
           // Resources and Damaged
-          const damaged = d.returnedMaterials.filter((m: any) => m.type === 'DAMAGED' || m.type === 'DEFECTIVE');
+          const damaged = d.returnedMaterials.filter((m: any) => m.type === 'DEFECTIVE');
           if (damaged.length > 0) {
             doc.moveDown(0.4);
             doc.fillColor('#b91c1c').font('Helvetica-Bold').fontSize(8).text('DANIFICADOS/DEFEITUOSOS:', 60);
@@ -218,6 +264,25 @@ export class ReportController {
               const key = `DAMAGED-${m.material.id}`;
               if (!totals.returned[key]) totals.returned[key] = { name: m.material.name, unit: m.material.unit, quantity: 0, type: 'Danificado' };
               totals.returned[key].quantity += m.quantity;
+            });
+          }
+
+          const recovered = d.returnedMaterials.filter((m: any) => m.type === 'RECOVERED');
+          if (recovered.length > 0) {
+            doc.moveDown(0.4);
+            doc.fillColor('#15803d').font('Helvetica-Bold').fontSize(8).text('MATERIAIS RECUPERADOS:', 60);
+            recovered.forEach((m: any) => {
+              const name = m.material?.name || m.materialName;
+              doc.font('Helvetica').fontSize(8).text(`• ${m.quantity} ${m.material?.unit || 'un'} - ${name}`, 70);
+              const key = m.materialId || `MANUAL-${m.materialName}`;
+              if (!totals.recovered[key]) {
+                totals.recovered[key] = { 
+                  name: name, 
+                  unit: m.material?.unit || 'un', 
+                  quantity: 0 
+                };
+              }
+              totals.recovered[key].quantity += m.quantity;
             });
           }
 
@@ -240,16 +305,17 @@ export class ReportController {
       // --- DASHBOARD DE RESUMO GERAL ---
       // Header matching cleaner style
       doc.rect(0, 0, 612, 100).fill('#FFFFFF');
-      doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(18).text('DASHBOARD SEMANAL - INTELIGÊNCIA OPERACIONAL', 0, 40, { align: 'center' });
+      const reportSubTitle = range === 'yearly' ? 'DASHBOARD ANUAL' : range === 'monthly' ? 'DASHBOARD MENSAL' : 'DASHBOARD SEMANAL';
+      doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(18).text(`${reportSubTitle} - INTELIGÊNCIA OPERACIONAL`, 0, 40, { align: 'center' });
       doc.rect(150, 70, 312, 2).fill('#0284c7');
       
       const dashY = 120;
       doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(12).text('INDICADORES DE PERFORMANCE', 50, dashY);
       
       // KPI Boxes (Center Aligned)
-      const boxWidth = 200;
-      const spacing = 40;
-      const startX = (612 - (boxWidth * 2 + spacing)) / 2;
+      const boxWidth = 160;
+      const spacing = 20;
+      const startX = (612 - (boxWidth * 3 + spacing * 2)) / 2;
 
       doc.rect(startX, dashY + 20, boxWidth, 60).fill('#f1f5f9');
       doc.fillColor('#64748b').fontSize(8).text('TOTAL DE DEMANDAS', startX + 10, dashY + 30);
@@ -260,7 +326,23 @@ export class ReportController {
       doc.fillColor('#64748b').fontSize(8).text('TOTAL ITENS UTILIZADOS', startX + boxWidth + spacing + 10, dashY + 30);
       doc.fillColor('#0284c7').fontSize(20).text(String(itemsUsed), startX + boxWidth + spacing + 10, dashY + 45);
 
+      const itemsRecovered = Object.values(totals.recovered).reduce((sum: number, m: any) => sum + m.quantity, 0) as number;
+      doc.rect(startX + (boxWidth + spacing) * 2, dashY + 20, boxWidth, 60).fill('#f1f5f9');
+      doc.fillColor('#64748b').fontSize(8).text('ITENS RECUPERADOS', startX + (boxWidth + spacing) * 2 + 10, dashY + 30);
+      doc.fillColor('#15803d').fontSize(20).text(String(itemsRecovered), startX + (boxWidth + spacing) * 2 + 10, dashY + 45);
+
       doc.moveDown(6);
+
+      if (itemsRecovered > 0) {
+        doc.fillColor('#15803d').font('Helvetica-Bold').fontSize(12).text('MATERIAIS RECUPERADOS NA SEMANA', 50);
+        doc.moveDown(1);
+        Object.values(totals.recovered).forEach((m: any) => {
+          doc.fillColor('#334155').font('Helvetica').fontSize(9).text(`• ${m.name}: `, 60, doc.y, { continued: true });
+          doc.fillColor('#15803d').font('Helvetica-Bold').text(`${m.quantity} ${m.unit || 'un'}`);
+          doc.moveDown(0.3);
+        });
+        doc.moveDown(1.5);
+      }
 
       // --- GRÁFICO DE BARRAS: TOP MATERIAIS ---
       doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(12).text('CONSUMO POR CATEGORIA DE MATERIAL (TOP 10)', 50);
@@ -343,11 +425,13 @@ export class ReportController {
 
   static async downloadDocx(req: AuthRequest, res: Response) {
     try {
-      const { start, end } = req.query;
+      const { start, end, range = 'weekly' } = req.query;
       if (!start || !end) return res.status(400).json({ error: 'Start and end dates are required' });
 
       const weekStart = startOfDay(parse(start as string, 'dd/MM/yyyy', new Date()));
       const weekEnd = endOfDay(parse(end as string, 'dd/MM/yyyy', new Date()));
+
+      const reportTitle = range === 'yearly' ? 'RELATÓRIO ANUAL' : range === 'monthly' ? 'RELATÓRIO MENSAL' : 'RELATÓRIO SEMANAL';
 
       const demands = await prisma.demand.findMany({
         where: {
@@ -363,11 +447,20 @@ export class ReportController {
         orderBy: { date: 'asc' }
       });
 
+      const standaloneRecovered = await prisma.returnedMaterial.findMany({
+        where: {
+          demandId: null,
+          type: 'RECOVERED',
+          date: { gte: weekStart, lte: weekEnd }
+        },
+        include: { material: true }
+      });
+
       const children: any[] = [
         new Paragraph({
           children: [
             new TextRun({
-              text: "RELATÓRIO ALMOXARIFADO ELÉTRICA - SEINFRA",
+              text: `${reportTitle} ALMOXARIFADO ELÉTRICA - SEINFRA`,
               bold: true,
               size: 32,
               color: '0284c7'
@@ -388,8 +481,34 @@ export class ReportController {
         }),
       ];
 
+      const recoveredTotals: any = {};
+      standaloneRecovered.forEach((m: any) => {
+        const key = m.materialId || `MANUAL-${m.materialName}`;
+        if (!recoveredTotals[key]) {
+          recoveredTotals[key] = { 
+            name: m.material?.name || m.materialName, 
+            unit: m.material?.unit || 'un', 
+            quantity: 0 
+          };
+        }
+        recoveredTotals[key].quantity += m.quantity;
+      });
+
       // Add demand info to DOCX
       demands.forEach(d => {
+        // Collect info for summary
+        d.returnedMaterials?.filter((m: any) => m.type === 'RECOVERED').forEach((m: any) => {
+          const key = m.materialId || `MANUAL-${m.materialName}`;
+          if (!recoveredTotals[key]) {
+            recoveredTotals[key] = { 
+              name: m.material?.name || m.materialName, 
+              unit: m.material?.unit || 'un', 
+              quantity: 0 
+            };
+          }
+          recoveredTotals[key].quantity += m.quantity;
+        });
+
         children.push(new Paragraph({
           children: [
             new TextRun({ text: `DATA: ${format(new Date(d.date), 'dd/MM/yyyy')} - LOCAL: ${d.location}`, bold: true, size: 22 })
@@ -434,6 +553,20 @@ export class ReportController {
         children.push(new Paragraph({ children: [new TextRun({ text: "----------------------------------------------------" })], spacing: { before: 200, after: 200 } }));
       });
 
+      const totalRecoveredList = Object.values(recoveredTotals);
+      if (totalRecoveredList.length > 0) {
+        children.push(new Paragraph({
+          children: [new TextRun({ text: "MATERIAIS RECUPERADOS NA SEMANA (TOTAL):", bold: true, size: 24, color: '15803d' })],
+          spacing: { before: 400, after: 200 }
+        }));
+        
+        totalRecoveredList.forEach((m: any) => {
+          children.push(new Paragraph({
+            children: [new TextRun({ text: `• ${m.quantity} ${m.unit || 'un'} - ${m.name}`, size: 20 })]
+          }));
+        });
+      }
+
       const doc = new Document({
         sections: [{
           properties: {},
@@ -443,7 +576,7 @@ export class ReportController {
 
       const buffer = await Packer.toBuffer(doc);
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-      res.setHeader('Content-Disposition', `attachment; filename=relatorio-${start}.docx`);
+      res.setHeader('Content-Disposition', `attachment; filename=relatorio-${range}-${start}.docx`);
       res.send(buffer);
     } catch (error) {
       console.error('[ReportController.downloadDocx] Error:', error);
