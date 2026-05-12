@@ -74,22 +74,29 @@ export class ReportController {
   }
 
   static async downloadPdf(req: AuthRequest, res: Response) {
+    console.log('[ReportController.downloadPdf] Starting PDF generation sequence...');
     try {
       const { start, end, range = 'weekly' } = req.query;
+      console.log(`[ReportController.downloadPdf] Params: start=${start}, end=${end}, range=${range}`);
       
       if (!start || !end) {
+        console.error('[ReportController.downloadPdf] Missing start or end dates');
         return res.status(400).json({ error: 'Start and end dates are required' });
       }
 
+      // Robust date parsing using date-fns/parse to ensure DD/MM/YYYY consistency across environments
+      console.log('[ReportController.downloadPdf] Parsing dates...');
       const weekStart = startOfDay(parse(start as string, 'dd/MM/yyyy', new Date()));
       const weekEnd = endOfDay(parse(end as string, 'dd/MM/yyyy', new Date()));
       
       const reportTitle = range === 'yearly' ? 'RELATÓRIO ANUAL' : range === 'monthly' ? 'RELATÓRIO MENSAL' : 'RELATÓRIO SEMANAL';
 
       if (isNaN(weekStart.getTime()) || isNaN(weekEnd.getTime())) {
+        console.error('[ReportController.downloadPdf] Invalid date format detected');
         return res.status(400).json({ error: 'Invalid date format. Use dd/MM/yyyy' });
       }
 
+      console.log(`[ReportController.downloadPdf] Fetching demands from ${weekStart.toISOString()} to ${weekEnd.toISOString()}...`);
       const demands = await prisma.demand.findMany({
         where: {
           date: { gte: weekStart, lte: weekEnd },
@@ -103,6 +110,7 @@ export class ReportController {
         },
         orderBy: { date: 'asc' }
       });
+      console.log(`[ReportController.downloadPdf] Found ${demands.length} demands.`);
 
       const standaloneRecovered = await prisma.returnedMaterial.findMany({
         where: {
@@ -112,7 +120,11 @@ export class ReportController {
         },
         include: { material: true }
       });
+      console.log(`[ReportController.downloadPdf] Found ${standaloneRecovered.length} standalone recovered items.`);
 
+      // Initialize PDFKit document in memory
+      // Note: We use PDFKit here. For Render/Linux, we prefer memory buffers over streams
+      // to avoid partial response failures (500 after some bytes sent).
       const doc = new PDFDocument({ 
         margin: 50,
         info: {
@@ -120,234 +132,224 @@ export class ReportController {
           Author: 'SISTEMA SEINFRA',
         }
       });
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename=relatorio-${range}-${start}.pdf`);
-      doc.pipe(res);
+
+      // Buffer collection strategy for Render stability
+      const chunks: any[] = [];
+      doc.on('data', chunk => chunks.push(chunk));
+      
+      const pdfGenerationPromise = new Promise<Buffer>((resolve, reject) => {
+        doc.on('end', () => resolve(Buffer.concat(chunks)));
+        doc.on('error', err => reject(err));
+      });
 
       try {
+        console.log('[ReportController.downloadPdf] Drawing PDF content...');
         // --- CAPA PROFISSIONAL ---
-        // Background Accent (Top Header - White for Logo Contrast)
         doc.rect(0, 0, 612, 180).fill('#FFFFFF');
         
         try {
-          const logoResponse = await axios.get('https://i.postimg.cc/W3n0DdqH/pref-logo-sha.png', { responseType: 'arraybuffer', timeout: 5000 });
+          console.log('[ReportController.downloadPdf] Fetching logo...');
+          const logoResponse = await axios.get('https://i.postimg.cc/W3n0DdqH/pref-logo-sha.png', { 
+            responseType: 'arraybuffer', 
+            timeout: 8000,
+            headers: { 'User-Agent': 'Mozilla/5.0' } // Added User-Agent for better compatibility with image hosts on Render
+          });
           doc.image(logoResponse.data, 236, 30, { width: 140 });
+          console.log('[ReportController.downloadPdf] Logo loaded successfully.');
         } catch (e) {
-          console.warn('Could not load logo for PDF:', e instanceof Error ? e.message : e);
+          console.warn('[ReportController.downloadPdf] Could not load logo for PDF. Continuing without it.', e instanceof Error ? e.message : e);
         }
 
         doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(26).text(reportTitle, 0, 155, { align: 'center', characterSpacing: 1 });
         doc.fontSize(16).text('ALMOXARIFADO DE MANUTENÇÃO ELÉTRICA', 0, 190, { align: 'center', characterSpacing: 0.5 });
         
         doc.fillColor('#475569').font('Helvetica-Bold').fontSize(14).text(`PERÍODO: ${start} À ${end}`, 0, 240, { align: 'center' });
-        
         doc.rect(180, 265, 252, 3).fill('#0284c7');
         
-        // Cover details
         doc.fillColor('#64748b').font('Helvetica').fontSize(11).text('SECRETARIA DE INFRAESTRUTURA - SEINFRA', 0, 710, { align: 'center' });
         doc.font('Helvetica-Bold').fillColor('#0f172a').text(format(new Date(), "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR }).toUpperCase(), 0, 730, { align: 'center' });
         
         doc.addPage();
 
-      // --- CONTEÚDO DAS DEMANDAS ---
-      const totals: any = { used: {}, returned: {}, recovered: {}, totalDemands: demands.length };
-      
-      // Pre-populate recovered totals with standalone entries
-      standaloneRecovered.forEach((m: any) => {
-        const key = m.materialId || `MANUAL-${m.materialName}`;
-        if (!totals.recovered[key]) {
-          totals.recovered[key] = { 
-            name: m.material?.name || m.materialName, 
-            unit: m.material?.unit || 'un', 
-            quantity: 0 
-          };
-        }
-        totals.recovered[key].quantity += m.quantity;
-      });
-
-      doc.fillColor('#000000'); // Reset color
-
-      const grouped = demands.reduce((acc: any, demand: any) => {
-        demand.electricians.forEach((e: any) => {
-          const name = e.name;
-          if (!acc[name]) acc[name] = [];
-          acc[name].push(demand);
+        // --- CONTEÚDO DAS DEMANDAS ---
+        const totals: any = { used: {}, returned: {}, recovered: {}, totalDemands: demands.length };
+        
+        standaloneRecovered.forEach((m: any) => {
+          const key = m.materialId || `MANUAL-${m.materialName}`;
+          if (!totals.recovered[key]) {
+            totals.recovered[key] = { 
+              name: m.material?.name || m.materialName, 
+              unit: m.material?.unit || 'un', 
+              quantity: 0 
+            };
+          }
+          totals.recovered[key].quantity += m.quantity;
         });
-        return acc;
-      }, {});
 
-      for (const [electricianName, eDemands] of Object.entries(grouped) as any[]) {
-        // Page Heading for Electrician
-        doc.rect(50, 40, 512, 30).fill('#f8fafc');
-        doc.font('Helvetica-Bold').fontSize(14).fillColor('#0284c7').text(`ELETRICISTA: ${electricianName.toUpperCase()}`, 60, 50);
-        doc.moveDown(1.5);
         doc.fillColor('#000000');
-
-        for (const d of eDemands) {
-          // Check for page break BEFORE demand
-          if (doc.y > 600) doc.addPage();
-
-          // Demand Card Header
-          const startY = doc.y;
-          doc.rect(50, startY, 512, 22).fill('#f1f5f9');
-          doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(11).text(`${format(new Date(d.date), 'dd/MM/yyyy')} - ${d.location}`, 60, startY + 6);
-          doc.moveDown(0.8);
-          
-          doc.fillColor('#334155').font('Helvetica-Oblique').fontSize(10).text(`Descrição: ${d.description}`, { lineGap: 2 });
-          doc.moveDown(0.5);
-
-          // Details Section
-          doc.fillColor('#64748b').font('Helvetica-Bold').fontSize(8).text('EQUIPE:', 60);
-          doc.fillColor('#0f172a').font('Helvetica').fontSize(9).text(d.electricians.map((e: any) => e.name).join(', '), 110, doc.y - 9);
-          doc.moveDown(0.4);
-
-          // Inventory Table Header
-          const tableY = doc.y;
-          doc.rect(50, tableY, 512, 15).fill('#334155');
-          doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(8);
-          doc.text('DESCRIÇÃO DO MATERIAL', 60, tableY + 4);
-          doc.text('PLANEJ.', 380, tableY + 4);
-          doc.text('UTILIZ.', 430, tableY + 4);
-          doc.text('SOBRA', 480, tableY + 4);
-          doc.moveDown(0.8);
-
-          // Combine unique materials from all lists
-          const allMaterialIds = new Set([
-            ...d.plannedMaterials.map((m: any) => m.materialId),
-            ...d.usedMaterials.map((m: any) => m.materialId),
-            ...d.returnedMaterials.map((m: any) => m.materialId)
-          ]);
-
-          doc.fillColor('#000000').font('Helvetica').fontSize(8);
-          allMaterialIds.forEach((mId: any) => {
-            if (doc.y > 750) {
-              doc.addPage();
-              // Re-draw table header on new page for the same demand if it breaks
-              const newTableY = doc.y;
-              doc.rect(50, newTableY, 512, 15).fill('#334155');
-              doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(8);
-              doc.text('DESCRIÇÃO DO MATERIAL (CONT.)', 60, newTableY + 4);
-              doc.text('PLANEJ.', 380, newTableY + 4);
-              doc.text('UTILIZ.', 430, newTableY + 4);
-              doc.text('SOBRA', 480, newTableY + 4);
-              doc.moveDown(0.8);
-              doc.fillColor('#000000').font('Helvetica').fontSize(8);
-            }
-
-            const pm = d.plannedMaterials.find((m: any) => m.materialId === mId);
-            const um = d.usedMaterials.find((m: any) => m.materialId === mId);
-            const rm = d.returnedMaterials.find((m: any) => m.materialId === mId && m.type === 'NOT_USED');
-            const material = pm?.material || um?.material || rm?.material;
-
-            const lineY = doc.y;
-            doc.text(material?.name || 'Material Desconhecido', 60, lineY);
-            doc.text(`${pm?.quantity || 0} ${material?.unit || ''}`, 380, lineY);
-            doc.text(`${um?.quantity || 0} ${material?.unit || ''}`, 430, lineY);
-            doc.text(`${rm?.quantity || 0} ${material?.unit || ''}`, 480, lineY);
-            
-            if (um) {
-              const key = um.material.id;
-              if (!totals.used[key]) totals.used[key] = { name: um.material.name, unit: um.material.unit, quantity: 0 };
-              totals.used[key].quantity += um.quantity;
-            }
-
-            doc.moveDown(0.2);
+        const grouped = demands.reduce((acc: any, demand: any) => {
+          demand.electricians.forEach((e: any) => {
+            const name = e.name;
+            if (!acc[name]) acc[name] = [];
+            acc[name].push(demand);
           });
+          return acc;
+        }, {});
 
-          // Resources and Damaged
-          const damaged = d.returnedMaterials.filter((m: any) => m.type === 'DEFECTIVE');
-          if (damaged.length > 0) {
-            doc.moveDown(0.4);
-            doc.fillColor('#b91c1c').font('Helvetica-Bold').fontSize(8).text('DANIFICADOS/DEFEITUOSOS:', 60);
-            damaged.forEach((m: any) => {
-              doc.font('Helvetica').fontSize(8).text(`• ${m.quantity} ${m.material.unit || 'un'} - ${m.material.name}`, 70);
-              const key = `DAMAGED-${m.material.id}`;
-              if (!totals.returned[key]) totals.returned[key] = { name: m.material.name, unit: m.material.unit, quantity: 0, type: 'Danificado' };
-              totals.returned[key].quantity += m.quantity;
-            });
-          }
-
-          const recovered = d.returnedMaterials.filter((m: any) => m.type === 'RECOVERED');
-          if (recovered.length > 0) {
-            doc.moveDown(0.4);
-            doc.fillColor('#15803d').font('Helvetica-Bold').fontSize(8).text('MATERIAIS RECUPERADOS:', 60);
-            recovered.forEach((m: any) => {
-              const name = m.material?.name || m.materialName;
-              doc.font('Helvetica').fontSize(8).text(`• ${m.quantity} ${m.material?.unit || 'un'} - ${name}`, 70);
-              const key = m.materialId || `MANUAL-${m.materialName}`;
-              if (!totals.recovered[key]) {
-                totals.recovered[key] = { 
-                  name: name, 
-                  unit: m.material?.unit || 'un', 
-                  quantity: 0 
-                };
-              }
-              totals.recovered[key].quantity += m.quantity;
-            });
-          }
-
-          const resources = [];
-          if (d.vehicles && d.vehicles.length > 0) resources.push(`Veículos: ${d.vehicles.join(', ')}`);
-          if (d.ladder) resources.push(`Escada: ${d.ladder}`);
-          if (resources.length > 0) {
-            doc.moveDown(0.4);
-            doc.fillColor('#0284c7').font('Helvetica-Bold').fontSize(8).text('RECURSOS UTILIZADOS:', 60);
-            resources.forEach(r => doc.fillColor('#0f172a').font('Helvetica').fontSize(8).text(`• ${r}`, 70));
-          }
-
+        for (const [electricianName, eDemands] of Object.entries(grouped) as any[]) {
+          doc.rect(50, 40, 512, 30).fill('#f8fafc');
+          doc.font('Helvetica-Bold').fontSize(14).fillColor('#0284c7').text(`ELETRCISTA: ${electricianName.toUpperCase()}`, 60, 50);
           doc.moveDown(1.5);
-          doc.rect(50, doc.y, 512, 0.5).fill('#e2e8f0');
-          doc.moveDown(1);
+          doc.fillColor('#000000');
+
+          for (const d of eDemands) {
+            if (doc.y > 600) doc.addPage();
+            const startY = doc.y;
+            doc.rect(50, startY, 512, 22).fill('#f1f5f9');
+            doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(11).text(`${format(new Date(d.date), 'dd/MM/yyyy')} - ${d.location}`, 60, startY + 6);
+            doc.moveDown(0.8);
+            
+            doc.fillColor('#334155').font('Helvetica-Oblique').fontSize(10).text(`Descrição: ${d.description}`, { lineGap: 2 });
+            doc.moveDown(0.5);
+
+            doc.fillColor('#64748b').font('Helvetica-Bold').fontSize(8).text('EQUIPE:', 60);
+            doc.fillColor('#0f172a').font('Helvetica').fontSize(9).text(d.electricians.map((e: any) => e.name).join(', '), 110, doc.y - 9);
+            doc.moveDown(0.4);
+
+            const tableY = doc.y;
+            doc.rect(50, tableY, 512, 15).fill('#334155');
+            doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(8);
+            doc.text('DESCRIÇÃO DO MATERIAL', 60, tableY + 4);
+            doc.text('PLANEJ.', 380, tableY + 4);
+            doc.text('UTILIZ.', 430, tableY + 4);
+            doc.text('SOBRA', 480, tableY + 4);
+            doc.moveDown(0.8);
+
+            const allMaterialIds = new Set([
+              ...d.plannedMaterials.map((m: any) => m.materialId),
+              ...d.usedMaterials.map((m: any) => m.materialId),
+              ...d.returnedMaterials.map((m: any) => m.materialId)
+            ]);
+
+            doc.fillColor('#000000').font('Helvetica').fontSize(8);
+            allMaterialIds.forEach((mId: any) => {
+              if (doc.y > 750) {
+                doc.addPage();
+                const newTableY = doc.y;
+                doc.rect(50, newTableY, 512, 15).fill('#334155');
+                doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(8);
+                doc.text('DESCRIÇÃO DO MATERIAL (CONT.)', 60, newTableY + 4);
+                doc.text('PLANEJ.', 380, newTableY + 4);
+                doc.text('UTILIZ.', 430, newTableY + 4);
+                doc.text('SOBRA', 480, newTableY + 4);
+                doc.moveDown(0.8);
+                doc.fillColor('#000000').font('Helvetica').fontSize(8);
+              }
+
+              const pm = d.plannedMaterials.find((m: any) => m.materialId === mId);
+              const um = d.usedMaterials.find((m: any) => m.materialId === mId);
+              const rm = d.returnedMaterials.find((m: any) => m.materialId === mId && m.type === 'NOT_USED');
+              const material = pm?.material || um?.material || rm?.material;
+
+              const lineY = doc.y;
+              doc.text(material?.name || 'Material Desconhecido', 60, lineY);
+              doc.text(`${pm?.quantity || 0} ${material?.unit || ''}`, 380, lineY);
+              doc.text(`${um?.quantity || 0} ${material?.unit || ''}`, 430, lineY);
+              doc.text(`${rm?.quantity || 0} ${material?.unit || ''}`, 480, lineY);
+              
+              if (um) {
+                const key = um.material.id;
+                if (!totals.used[key]) totals.used[key] = { name: um.material.name, unit: um.material.unit, quantity: 0 };
+                totals.used[key].quantity += um.quantity;
+              }
+              doc.moveDown(0.2);
+            });
+
+            const damaged = d.returnedMaterials.filter((m: any) => m.type === 'DEFECTIVE');
+            if (damaged.length > 0) {
+              doc.moveDown(0.4);
+              doc.fillColor('#b91c1c').font('Helvetica-Bold').fontSize(8).text('DANIFICADOS/DEFEITUOSOS:', 60);
+              damaged.forEach((m: any) => {
+                doc.font('Helvetica').fontSize(8).text(`• ${m.quantity} ${m.material.unit || 'un'} - ${m.material.name}`, 70);
+                const key = `DAMAGED-${m.material.id}`;
+                if (!totals.returned[key]) totals.returned[key] = { name: m.material.name, unit: m.material.unit, quantity: 0, type: 'Danificado' };
+                totals.returned[key].quantity += m.quantity;
+              });
+            }
+
+            const recovered = d.returnedMaterials.filter((m: any) => m.type === 'RECOVERED');
+            if (recovered.length > 0) {
+              doc.moveDown(0.4);
+              doc.fillColor('#15803d').font('Helvetica-Bold').fontSize(8).text('MATERIAIS RECUPERADOS:', 60);
+              recovered.forEach((m: any) => {
+                const name = m.material?.name || m.materialName;
+                doc.font('Helvetica').fontSize(8).text(`• ${m.quantity} ${m.material?.unit || 'un'} - ${name}`, 70);
+                const key = m.materialId || `MANUAL-${m.materialName}`;
+                if (!totals.recovered[key]) {
+                  totals.recovered[key] = { name, unit: m.material?.unit || 'un', quantity: 0 };
+                }
+                totals.recovered[key].quantity += m.quantity;
+              });
+            }
+
+            const resources = [];
+            if (d.vehicles && d.vehicles.length > 0) resources.push(`Veículos: ${d.vehicles.join(', ')}`);
+            if (d.ladder) resources.push(`Escada: ${d.ladder}`);
+            if (resources.length > 0) {
+              doc.moveDown(0.4);
+              doc.fillColor('#0284c7').font('Helvetica-Bold').fontSize(8).text('RECURSOS UTILIZADOS:', 60);
+              resources.forEach(r => doc.fillColor('#0f172a').font('Helvetica').fontSize(8).text(`• ${r}`, 70));
+            }
+
+            doc.moveDown(1.5);
+            doc.rect(50, doc.y, 512, 0.5).fill('#e2e8f0');
+            doc.moveDown(1);
+          }
+          doc.addPage();
         }
-        doc.addPage();
-      }
 
-      // --- DASHBOARD DE RESUMO GERAL ---
-      // Header matching cleaner style
-      doc.rect(0, 0, 612, 100).fill('#FFFFFF');
-      const reportSubTitle = range === 'yearly' ? 'DASHBOARD ANUAL' : range === 'monthly' ? 'DASHBOARD MENSAL' : 'DASHBOARD SEMANAL';
-      doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(18).text(`${reportSubTitle} - INTELIGÊNCIA OPERACIONAL`, 0, 40, { align: 'center' });
-      doc.rect(150, 70, 312, 2).fill('#0284c7');
-      
-      const dashY = 120;
-      doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(12).text('INDICADORES DE PERFORMANCE', 50, dashY);
-      
-      // KPI Boxes (Center Aligned)
-      const boxWidth = 160;
-      const spacing = 20;
-      const startX = (612 - (boxWidth * 3 + spacing * 2)) / 2;
+        // --- DASHBOARD DE RESUMO GERAL ---
+        doc.rect(0, 0, 612, 100).fill('#FFFFFF');
+        const reportSubTitle = range === 'yearly' ? 'DASHBOARD ANUAL' : range === 'monthly' ? 'DASHBOARD MENSAL' : 'DASHBOARD SEMANAL';
+        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(18).text(`${reportSubTitle} - INTELIGÊNCIA OPERACIONAL`, 0, 40, { align: 'center' });
+        doc.rect(150, 70, 312, 2).fill('#0284c7');
+        
+        const dashY = 120;
+        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(12).text('INDICADORES DE PERFORMANCE', 50, dashY);
+        
+        const boxWidth = 160;
+        const spacing = 20;
+        const startX = (612 - (boxWidth * 3 + spacing * 2)) / 2;
 
-      doc.rect(startX, dashY + 20, boxWidth, 60).fill('#f1f5f9');
-      doc.fillColor('#64748b').fontSize(8).text('TOTAL DE DEMANDAS', startX + 10, dashY + 30);
-      doc.fillColor('#0f172a').fontSize(20).text(String(totals.totalDemands), startX + 10, dashY + 45);
+        doc.rect(startX, dashY + 20, boxWidth, 60).fill('#f1f5f9');
+        doc.fillColor('#64748b').fontSize(8).text('TOTAL DE DEMANDAS', startX + 10, dashY + 30);
+        doc.fillColor('#0f172a').fontSize(20).text(String(totals.totalDemands), startX + 10, dashY + 45);
 
-      const itemsUsed = Object.values(totals.used).reduce((sum: number, m: any) => sum + m.quantity, 0);
-      doc.rect(startX + boxWidth + spacing, dashY + 20, boxWidth, 60).fill('#f1f5f9');
-      doc.fillColor('#64748b').fontSize(8).text('TOTAL ITENS UTILIZADOS', startX + boxWidth + spacing + 10, dashY + 30);
-      doc.fillColor('#0284c7').fontSize(20).text(String(itemsUsed), startX + boxWidth + spacing + 10, dashY + 45);
+        const itemsUsed = Object.values(totals.used).reduce((sum: number, m: any) => sum + (m as any).quantity, 0);
+        doc.rect(startX + boxWidth + spacing, dashY + 20, boxWidth, 60).fill('#f1f5f9');
+        doc.fillColor('#64748b').fontSize(8).text('TOTAL ITENS UTILIZADOS', startX + boxWidth + spacing + 10, dashY + 30);
+        doc.fillColor('#0284c7').fontSize(20).text(String(itemsUsed), startX + boxWidth + spacing + 10, dashY + 45);
 
-      const itemsRecovered = Object.values(totals.recovered).reduce((sum: number, m: any) => sum + m.quantity, 0) as number;
-      doc.rect(startX + (boxWidth + spacing) * 2, dashY + 20, boxWidth, 60).fill('#f1f5f9');
-      doc.fillColor('#64748b').fontSize(8).text('ITENS RECUPERADOS', startX + (boxWidth + spacing) * 2 + 10, dashY + 30);
-      doc.fillColor('#15803d').fontSize(20).text(String(itemsRecovered), startX + (boxWidth + spacing) * 2 + 10, dashY + 45);
+        const itemsRecovered = Object.values(totals.recovered).reduce((sum: number, m: any) => sum + (m as any).quantity, 0) as number;
+        doc.rect(startX + (boxWidth + spacing) * 2, dashY + 20, boxWidth, 60).fill('#f1f5f9');
+        doc.fillColor('#64748b').fontSize(8).text('ITENS RECUPERADOS', startX + (boxWidth + spacing) * 2 + 10, dashY + 30);
+        doc.fillColor('#15803d').fontSize(20).text(String(itemsRecovered), startX + (boxWidth + spacing) * 2 + 10, dashY + 45);
 
-      doc.moveDown(6);
+        doc.moveDown(6);
 
-      if (itemsRecovered > 0) {
-        doc.fillColor('#15803d').font('Helvetica-Bold').fontSize(12).text('MATERIAIS RECUPERADOS NA SEMANA', 50);
+        if (itemsRecovered > 0) {
+          doc.fillColor('#15803d').font('Helvetica-Bold').fontSize(12).text('MATERIAIS RECUPERADOS NO PERÍODO', 50);
+          doc.moveDown(1);
+          Object.values(totals.recovered).forEach((m: any) => {
+            doc.fillColor('#334155').font('Helvetica').fontSize(9).text(`• ${m.name}: `, 60, doc.y, { continued: true });
+            doc.fillColor('#15803d').font('Helvetica-Bold').text(`${m.quantity} ${m.unit || 'un'}`);
+            doc.moveDown(0.3);
+          });
+          doc.moveDown(1.5);
+        }
+
+        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(12).text('CONSUMO POR CATEGORIA DE MATERIAL (TOP 10)', 50);
         doc.moveDown(1);
-        Object.values(totals.recovered).forEach((m: any) => {
-          doc.fillColor('#334155').font('Helvetica').fontSize(9).text(`• ${m.name}: `, 60, doc.y, { continued: true });
-          doc.fillColor('#15803d').font('Helvetica-Bold').text(`${m.quantity} ${m.unit || 'un'}`);
-          doc.moveDown(0.3);
-        });
-        doc.moveDown(1.5);
-      }
-
-      // --- GRÁFICO DE BARRAS: TOP MATERIAIS ---
-      doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(12).text('CONSUMO POR CATEGORIA DE MATERIAL (TOP 10)', 50);
-      doc.moveDown(1);
-
         const usedSorted = Object.values(totals.used).sort((a: any, b: any) => b.quantity - a.quantity).slice(0, 10);
         
         if (usedSorted.length > 0) {
@@ -358,67 +360,65 @@ export class ReportController {
 
           usedSorted.forEach((m: any) => {
             const y = doc.y;
-            // Label
             doc.fillColor('#334155').font('Helvetica').fontSize(8).text(m.name, 50, y + 4, { width: 120, align: 'right' });
-            
-            // Background Bar
             doc.rect(chartX, y, chartWidth, barHeight).fill('#f1f5f9');
-            
-            // Value Bar
             const barWidth = Math.max(0, (m.quantity / maxQty) * chartWidth);
             doc.rect(chartX, y, barWidth, barHeight).fill('#0284c7');
-            
-            // Value Label
             doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(7).text(String(m.quantity), chartX + 5, y + 4);
-
             doc.moveDown(1.5);
           });
         } else {
           doc.font('Helvetica').fontSize(10).text('Nenhum dado de material disponível para o gráfico.', 50);
         }
 
-      doc.moveDown(2);
+        doc.moveDown(2);
+        if (usedSorted.length > 5) doc.addPage();
+        
+        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(12).text('DETALHAMENTO DE MATERIAIS UTILIZADOS', 50);
+        doc.moveDown(1);
+        
+        const fullUsedSorted = Object.values(totals.used).sort((a: any, b: any) => a.name.localeCompare(b.name));
+        fullUsedSorted.forEach((m: any) => {
+          const lineY = doc.y;
+          doc.fillColor('#475569').font('Helvetica').fontSize(9).text(`• ${m.name}`, 60, lineY);
+          doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(9).text(`${m.quantity} ${m.unit || 'un'}`, 480, lineY, { align: 'right', width: 80 });
+          doc.moveDown(0.3);
+          if (doc.y > 680) doc.addPage();
+        });
 
-      // Detailed list if needed (on new page if lot of items)
-      if (usedSorted.length > 5) doc.addPage();
-      
-      doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(12).text('DETALHAMENTO DE MATERIAIS UTILIZADOS', 50);
-      doc.moveDown(1);
-      
-      const fullUsedSorted = Object.values(totals.used).sort((a: any, b: any) => a.name.localeCompare(b.name));
-      fullUsedSorted.forEach((m: any) => {
-        const lineY = doc.y;
-        doc.fillColor('#475569').font('Helvetica').fontSize(9).text(`• ${m.name}`, 60, lineY);
-        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(9).text(`${m.quantity} ${m.unit || 'un'}`, 480, lineY, { align: 'right', width: 80 });
-        doc.moveDown(0.3);
-        if (doc.y > 680) doc.addPage();
-      });
+        doc.font('Helvetica').fontSize(10);
+        const signY = 700;
+        doc.text('__________________________', 50, signY, { width: 150, align: 'center' });
+        doc.text('COORDENADOR DE ELETRICIDADE', 50, signY + 15, { width: 150, align: 'center' });
+        doc.text('__________________________', 230, signY, { width: 150, align: 'center' });
+        doc.text('SECRETÁRIO DE INFRA', 230, signY + 15, { width: 150, align: 'center' });
+        doc.text('__________________________', 410, signY, { width: 150, align: 'center' });
+        doc.text('ALMOXARIFE / RESPONSÁVEL', 410, signY + 15, { width: 150, align: 'center' });
 
-      // Signatures at the end
-      doc.font('Helvetica').fontSize(10);
-      const signY = 700;
-      doc.text('__________________________', 50, signY, { width: 150, align: 'center' });
-      doc.text('COORDENADOR DE ELETRICIDADE', 50, signY + 15, { width: 150, align: 'center' });
-      
-      doc.text('__________________________', 230, signY, { width: 150, align: 'center' });
-      doc.text('SECRETÁRIO DE INFRA', 230, signY + 15, { width: 150, align: 'center' });
-
-      doc.text('__________________________', 410, signY, { width: 150, align: 'center' });
-      doc.text('ALMOXARIFE / RESPONSÁVEL', 410, signY + 15, { width: 150, align: 'center' });
-
-      doc.end();
+        doc.end();
+        console.log('[ReportController.downloadPdf] PDF generation finished, waiting for buffer...');
+        
+        const finalBuffer = await pdfGenerationPromise;
+        console.log(`[ReportController.downloadPdf] Sending PDF buffer: ${finalBuffer.length} bytes`);
+        
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=relatorio-${range}-${start}.pdf`);
+        res.send(finalBuffer);
+        
       } catch (pdfError) {
-        console.error('Error generating PDF content:', pdfError);
-        // We can't use res.status here if headers are already sent
+        console.error('[ReportController.downloadPdf] Critical error during PDF layout/generation:', pdfError);
         if (!res.headersSent) {
-          res.status(500).json({ error: 'Error generating PDF content', details: String(pdfError) });
+          res.status(500).json({ error: 'Erro ao formatar o conteúdo do PDF', details: String(pdfError) });
         }
-        doc.end(); // Try to close it anyway
       }
-    } catch (error) {
-      console.error('[ReportController.downloadPdf] Outer Error:', error);
+    } catch (error: any) {
+      console.error('[ReportController.downloadPdf] Outer Controller Error:', error);
       if (!res.headersSent) {
-        res.status(500).json({ error: 'Internal server error', details: String(error) });
+        res.status(500).json({ 
+          error: 'Falha interna ao processar o relatório', 
+          details: error.message,
+          stack: process.env.NODE_ENV === 'development' ? error.stack : undefined 
+        });
       }
     }
   }
