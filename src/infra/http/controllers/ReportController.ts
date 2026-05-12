@@ -146,31 +146,41 @@ export class ReportController {
       });
 
       try {
-        console.log('[ReportController.downloadPdf] Drawing PDF content...');
+        console.log('[ReportController.downloadPdf] Loading fonts and assets...');
+        
+        // --- LOAD FONTS AND LOGO ---
+        const [logoRes, fontRegularRes, fontBoldRes, fontItalicRes] = await Promise.allSettled([
+          axios.get('https://i.postimg.cc/W3n0DdqH/pref-logo-sha.png', { responseType: 'arraybuffer', timeout: 8000, headers: { 'User-Agent': 'Mozilla/5.0' } }),
+          axios.get('https://github.com/google/fonts/raw/main/apache/roboto/static/Roboto-Regular.ttf', { responseType: 'arraybuffer', timeout: 10000 }),
+          axios.get('https://github.com/google/fonts/raw/main/apache/roboto/static/Roboto-Bold.ttf', { responseType: 'arraybuffer', timeout: 10000 }),
+          axios.get('https://github.com/google/fonts/raw/main/apache/roboto/static/Roboto-Italic.ttf', { responseType: 'arraybuffer', timeout: 10000 })
+        ]);
+
+        // Register fonts if successful
+        if (fontRegularRes.status === 'fulfilled') doc.registerFont('AppFont', fontRegularRes.value.data);
+        if (fontBoldRes.status === 'fulfilled') doc.registerFont('AppFont-Bold', fontBoldRes.value.data);
+        if (fontItalicRes.status === 'fulfilled') doc.registerFont('AppFont-Italic', fontItalicRes.value.data);
+
+        // Define font names based on what was loaded, fallback to Helvetica (risky on Render but better than nothing)
+        const fontRegular = fontRegularRes.status === 'fulfilled' ? 'AppFont' : 'Helvetica';
+        const fontBold = fontBoldRes.status === 'fulfilled' ? 'AppFont-Bold' : 'Helvetica-Bold';
+        const fontItalic = fontItalicRes.status === 'fulfilled' ? 'AppFont-Italic' : 'Helvetica-Oblique';
+
         // --- CAPA PROFISSIONAL ---
         doc.rect(0, 0, 612, 180).fill('#FFFFFF');
         
-        try {
-          console.log('[ReportController.downloadPdf] Fetching logo from external source...');
-          const logoResponse = await axios.get('https://i.postimg.cc/W3n0DdqH/pref-logo-sha.png', { 
-            responseType: 'arraybuffer', 
-            timeout: 7000,
-            headers: { 'User-Agent': 'Mozilla/5.0' } 
-          });
-          doc.image(logoResponse.data, 236, 30, { width: 140 });
-          console.log('[ReportController.downloadPdf] Logo loaded successfully.');
-        } catch (e) {
-          console.warn('[ReportController.downloadPdf] Could not load logo for PDF. Continuing without it.', e instanceof Error ? e.message : e);
+        if (logoRes.status === 'fulfilled') {
+          doc.image(logoRes.value.data, 236, 30, { width: 140 });
         }
 
-        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(26).text(reportTitle, 0, 155, { align: 'center', characterSpacing: 1 });
+        doc.fillColor('#0f172a').font(fontBold).fontSize(26).text(reportTitle, 0, 155, { align: 'center', characterSpacing: 1 });
         doc.fontSize(16).text('ALMOXARIFADO DE MANUTENÇÃO ELÉTRICA', 0, 190, { align: 'center', characterSpacing: 0.5 });
         
-        doc.fillColor('#475569').font('Helvetica-Bold').fontSize(14).text(`PERÍODO: ${start} À ${end}`, 0, 240, { align: 'center' });
+        doc.fillColor('#475569').font(fontBold).fontSize(14).text(`PERÍODO: ${start} À ${end}`, 0, 240, { align: 'center' });
         doc.rect(180, 265, 252, 3).fill('#0284c7');
         
-        doc.fillColor('#64748b').font('Helvetica').fontSize(11).text('SECRETARIA DE INFRAESTRUTURA - SEINFRA', 0, 710, { align: 'center' });
-        doc.font('Helvetica-Bold').fillColor('#0f172a').text(format(new Date(), "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR }).toUpperCase(), 0, 730, { align: 'center' });
+        doc.fillColor('#64748b').font(fontRegular).fontSize(11).text('SECRETARIA DE INFRAESTRUTURA - SEINFRA', 0, 710, { align: 'center' });
+        doc.font(fontBold).fillColor('#0f172a').text(format(new Date(), "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR }).toUpperCase(), 0, 730, { align: 'center' });
         
         doc.addPage();
 
@@ -201,7 +211,7 @@ export class ReportController {
 
         for (const [electricianName, eDemands] of Object.entries(grouped) as any[]) {
           doc.rect(50, 40, 512, 30).fill('#f8fafc');
-          doc.font('Helvetica-Bold').fontSize(14).fillColor('#0284c7').text(`ELETRICISTA: ${electricianName.toUpperCase()}`, 60, 50);
+          doc.font(fontBold).fontSize(14).fillColor('#0284c7').text(`ELETRICISTA: ${electricianName.toUpperCase()}`, 60, 50);
           doc.moveDown(1.5);
           doc.fillColor('#000000');
 
@@ -210,21 +220,20 @@ export class ReportController {
             const startY = doc.y;
             doc.rect(50, startY, 512, 22).fill('#f1f5f9');
             
-            // Safe date formatting
             const displayDate = d.date instanceof Date ? format(d.date, 'dd/MM/yyyy') : format(new Date(d.date), 'dd/MM/yyyy');
-            doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(11).text(`${displayDate} - ${d.location}`, 60, startY + 6);
+            doc.fillColor('#0f172a').font(fontBold).fontSize(11).text(`${displayDate} - ${d.location}`, 60, startY + 6);
             doc.moveDown(0.8);
             
-            doc.fillColor('#334155').font('Helvetica-Oblique').fontSize(10).text(`Descrição: ${d.description}`, { lineGap: 2 });
+            doc.fillColor('#334155').font(fontItalic).fontSize(10).text(`Descrição: ${d.description}`, { lineGap: 2 });
             doc.moveDown(0.5);
 
-            doc.fillColor('#64748b').font('Helvetica-Bold').fontSize(8).text('EQUIPE:', 60);
-            doc.fillColor('#0f172a').font('Helvetica').fontSize(9).text(d.electricians.map((e: any) => e.name).join(', '), 110, doc.y - 9);
+            doc.fillColor('#64748b').font(fontBold).fontSize(8).text('EQUIPE:', 60);
+            doc.fillColor('#0f172a').font(fontRegular).fontSize(9).text(d.electricians.map((e: any) => e.name).join(', '), 110, doc.y - 9);
             doc.moveDown(0.4);
 
             const tableY = doc.y;
             doc.rect(50, tableY, 512, 15).fill('#334155');
-            doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(8);
+            doc.fillColor('#FFFFFF').font(fontBold).fontSize(8);
             doc.text('DESCRIÇÃO DO MATERIAL', 60, tableY + 4);
             doc.text('PLANEJ.', 380, tableY + 4);
             doc.text('UTILIZ.', 430, tableY + 4);
@@ -237,19 +246,19 @@ export class ReportController {
               ...d.returnedMaterials.map((m: any) => m.materialId)
             ]);
 
-            doc.fillColor('#000000').font('Helvetica').fontSize(8);
+            doc.fillColor('#000000').font(fontRegular).fontSize(8);
             allMaterialIds.forEach((mId: any) => {
               if (doc.y > 750) {
                 doc.addPage();
                 const newTableY = doc.y;
                 doc.rect(50, newTableY, 512, 15).fill('#334155');
-                doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(8);
+                doc.fillColor('#FFFFFF').font(fontBold).fontSize(8);
                 doc.text('DESCRIÇÃO DO MATERIAL (CONT.)', 60, newTableY + 4);
                 doc.text('PLANEJ.', 380, newTableY + 4);
                 doc.text('UTILIZ.', 430, newTableY + 4);
                 doc.text('SOBRA', 480, newTableY + 4);
                 doc.moveDown(0.8);
-                doc.fillColor('#000000').font('Helvetica').fontSize(8);
+                doc.fillColor('#000000').font(fontRegular).fontSize(8);
               }
 
               const pm = d.plannedMaterials.find((m: any) => m.materialId === mId);
@@ -274,9 +283,9 @@ export class ReportController {
             const damaged = d.returnedMaterials.filter((m: any) => m.type === 'DEFECTIVE');
             if (damaged.length > 0) {
               doc.moveDown(0.4);
-              doc.fillColor('#b91c1c').font('Helvetica-Bold').fontSize(8).text('DANIFICADOS/DEFEITUOSOS:', 60);
+              doc.fillColor('#b91c1c').font(fontBold).fontSize(8).text('DANIFICADOS/DEFEITUOSOS:', 60);
               damaged.forEach((m: any) => {
-                doc.font('Helvetica').fontSize(8).text(`• ${m.quantity} ${m.material.unit || 'un'} - ${m.material.name}`, 70);
+                doc.font(fontRegular).fontSize(8).text(`• ${m.quantity} ${m.material.unit || 'un'} - ${m.material.name}`, 70);
                 const key = `DAMAGED-${m.material.id}`;
                 if (!totals.returned[key]) totals.returned[key] = { name: m.material.name, unit: m.material.unit, quantity: 0, type: 'Danificado' };
                 totals.returned[key].quantity += m.quantity;
@@ -286,10 +295,10 @@ export class ReportController {
             const recovered = d.returnedMaterials.filter((m: any) => m.type === 'RECOVERED');
             if (recovered.length > 0) {
               doc.moveDown(0.4);
-              doc.fillColor('#15803d').font('Helvetica-Bold').fontSize(8).text('MATERIAIS RECUPERADOS:', 60);
+              doc.fillColor('#15803d').font(fontBold).fontSize(8).text('MATERIAIS RECUPERADOS:', 60);
               recovered.forEach((m: any) => {
                 const name = m.material?.name || m.materialName;
-                doc.font('Helvetica').fontSize(8).text(`• ${m.quantity} ${m.material?.unit || 'un'} - ${name}`, 70);
+                doc.font(fontRegular).fontSize(8).text(`• ${m.quantity} ${m.material?.unit || 'un'} - ${name}`, 70);
                 const key = m.materialId || `MANUAL-${m.materialName}`;
                 if (!totals.recovered[key]) {
                   totals.recovered[key] = { name, unit: m.material?.unit || 'un', quantity: 0 };
@@ -303,8 +312,8 @@ export class ReportController {
             if (d.ladder) resources.push(`Escada: ${d.ladder}`);
             if (resources.length > 0) {
               doc.moveDown(0.4);
-              doc.fillColor('#0284c7').font('Helvetica-Bold').fontSize(8).text('RECURSOS UTILIZADOS:', 60);
-              resources.forEach(r => doc.fillColor('#0f172a').font('Helvetica').fontSize(8).text(`• ${r}`, 70));
+              doc.fillColor('#0284c7').font(fontBold).fontSize(8).text('RECURSOS UTILIZADOS:', 60);
+              resources.forEach(r => doc.fillColor('#0f172a').font(fontRegular).fontSize(8).text(`• ${r}`, 70));
             }
 
             doc.moveDown(1.5);
@@ -317,11 +326,11 @@ export class ReportController {
         // --- DASHBOARD DE RESUMO GERAL ---
         doc.rect(0, 0, 612, 100).fill('#FFFFFF');
         const reportSubTitle = range === 'yearly' ? 'DASHBOARD ANUAL' : range === 'monthly' ? 'DASHBOARD MENSAL' : 'DASHBOARD SEMANAL';
-        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(18).text(`${reportSubTitle} - INTELIGÊNCIA OPERACIONAL`, 0, 40, { align: 'center' });
+        doc.fillColor('#0f172a').font(fontBold).fontSize(18).text(`${reportSubTitle} - INTELIGÊNCIA OPERACIONAL`, 0, 40, { align: 'center' });
         doc.rect(150, 70, 312, 2).fill('#0284c7');
         
         const dashY = 120;
-        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(12).text('INDICADORES DE PERFORMANCE', 50, dashY);
+        doc.fillColor('#0f172a').font(fontBold).fontSize(12).text('INDICADORES DE PERFORMANCE', 50, dashY);
         
         const boxWidth = 160;
         const spacing = 20;
@@ -344,17 +353,17 @@ export class ReportController {
         doc.moveDown(6);
 
         if (itemsRecovered > 0) {
-          doc.fillColor('#15803d').font('Helvetica-Bold').fontSize(12).text('MATERIAIS RECUPERADOS NO PERÍODO', 50);
+          doc.fillColor('#15803d').font(fontBold).fontSize(12).text('MATERIAIS RECUPERADOS NO PERÍODO', 50);
           doc.moveDown(1);
           Object.values(totals.recovered).forEach((m: any) => {
-            doc.fillColor('#334155').font('Helvetica').fontSize(9).text(`• ${m.name}: `, 60, doc.y, { continued: true });
-            doc.fillColor('#15803d').font('Helvetica-Bold').text(`${m.quantity} ${m.unit || 'un'}`);
+            doc.fillColor('#334155').font(fontRegular).fontSize(9).text(`• ${m.name}: `, 60, doc.y, { continued: true });
+            doc.fillColor('#15803d').font(fontBold).text(`${m.quantity} ${m.unit || 'un'}`);
             doc.moveDown(0.3);
           });
           doc.moveDown(1.5);
         }
 
-        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(12).text('CONSUMO POR CATEGORIA DE MATERIAL (TOP 10)', 50);
+        doc.fillColor('#0f172a').font(fontBold).fontSize(12).text('CONSUMO POR CATEGORIA DE MATERIAL (TOP 10)', 50);
         doc.moveDown(1);
         const usedSorted = Object.values(totals.used).sort((a: any, b: any) => b.quantity - a.quantity).slice(0, 10);
         
@@ -366,33 +375,33 @@ export class ReportController {
 
           usedSorted.forEach((m: any) => {
             const y = doc.y;
-            doc.fillColor('#334155').font('Helvetica').fontSize(8).text(m.name, 50, y + 4, { width: 120, align: 'right' });
+            doc.fillColor('#334155').font(fontRegular).fontSize(8).text(m.name, 50, y + 4, { width: 120, align: 'right' });
             doc.rect(chartX, y, chartWidth, barHeight).fill('#f1f5f9');
             const barWidth = Math.max(0, (m.quantity / maxQty) * chartWidth);
             doc.rect(chartX, y, barWidth, barHeight).fill('#0284c7');
-            doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(7).text(String(m.quantity), chartX + 5, y + 4);
+            doc.fillColor('#FFFFFF').font(fontBold).fontSize(7).text(String(m.quantity), chartX + 5, y + 4);
             doc.moveDown(1.5);
           });
         } else {
-          doc.font('Helvetica').fontSize(10).text('Nenhum dado de material disponível para o gráfico.', 50);
+          doc.font(fontRegular).fontSize(10).text('Nenhum dado de material disponível para o gráfico.', 50);
         }
 
         doc.moveDown(2);
         if (usedSorted.length > 5) doc.addPage();
         
-        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(12).text('DETALHAMENTO DE MATERIAIS UTILIZADOS', 50);
+        doc.fillColor('#0f172a').font(fontBold).fontSize(12).text('DETALHAMENTO DE MATERIAIS UTILIZADOS', 50);
         doc.moveDown(1);
         
         const fullUsedSorted = Object.values(totals.used).sort((a: any, b: any) => a.name.localeCompare(b.name));
         fullUsedSorted.forEach((m: any) => {
           const lineY = doc.y;
-          doc.fillColor('#475569').font('Helvetica').fontSize(9).text(`• ${m.name}`, 60, lineY);
-          doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(9).text(`${m.quantity} ${m.unit || 'un'}`, 480, lineY, { align: 'right', width: 80 });
+          doc.fillColor('#475569').font(fontRegular).fontSize(9).text(`• ${m.name}`, 60, lineY);
+          doc.fillColor('#0f172a').font(fontBold).fontSize(9).text(`${m.quantity} ${m.unit || 'un'}`, 480, lineY, { align: 'right', width: 80 });
           doc.moveDown(0.3);
           if (doc.y > 680) doc.addPage();
         });
 
-        doc.font('Helvetica').fontSize(10);
+        doc.font(fontRegular).fontSize(10);
         const signY = 700;
         doc.text('__________________________', 50, signY, { width: 150, align: 'center' });
         doc.text('COORDENADOR DE ELETRICIDADE', 50, signY + 15, { width: 150, align: 'center' });
