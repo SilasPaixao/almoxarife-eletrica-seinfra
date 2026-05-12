@@ -123,8 +123,8 @@ export class ReportController {
       console.log(`[ReportController.downloadPdf] Found ${standaloneRecovered.length} standalone recovered items.`);
 
       // Initialize PDFKit document in memory
-      // Note: We use PDFKit here. For Render/Linux, we prefer memory buffers over streams
-      // to avoid partial response failures (500 after some bytes sent).
+      // Note: We avoid Puppeteer/Chromium entirely here for better stability on Render.
+      // PDFKit is a pure-JS generator that doesn't require complex browser setups.
       const doc = new PDFDocument({ 
         margin: 50,
         info: {
@@ -133,13 +133,16 @@ export class ReportController {
         }
       });
 
-      // Buffer collection strategy for Render stability
-      const chunks: any[] = [];
+      // Buffer collection strategy for Render stability (avoids partial response failures)
+      const chunks: Buffer[] = [];
       doc.on('data', chunk => chunks.push(chunk));
       
       const pdfGenerationPromise = new Promise<Buffer>((resolve, reject) => {
         doc.on('end', () => resolve(Buffer.concat(chunks)));
-        doc.on('error', err => reject(err));
+        doc.on('error', err => {
+          console.error('[ReportController.pdfGenerationPromise] Stream error:', err);
+          reject(err);
+        });
       });
 
       try {
@@ -148,11 +151,11 @@ export class ReportController {
         doc.rect(0, 0, 612, 180).fill('#FFFFFF');
         
         try {
-          console.log('[ReportController.downloadPdf] Fetching logo...');
+          console.log('[ReportController.downloadPdf] Fetching logo from external source...');
           const logoResponse = await axios.get('https://i.postimg.cc/W3n0DdqH/pref-logo-sha.png', { 
             responseType: 'arraybuffer', 
-            timeout: 8000,
-            headers: { 'User-Agent': 'Mozilla/5.0' } // Added User-Agent for better compatibility with image hosts on Render
+            timeout: 7000,
+            headers: { 'User-Agent': 'Mozilla/5.0' } 
           });
           doc.image(logoResponse.data, 236, 30, { width: 140 });
           console.log('[ReportController.downloadPdf] Logo loaded successfully.');
@@ -198,7 +201,7 @@ export class ReportController {
 
         for (const [electricianName, eDemands] of Object.entries(grouped) as any[]) {
           doc.rect(50, 40, 512, 30).fill('#f8fafc');
-          doc.font('Helvetica-Bold').fontSize(14).fillColor('#0284c7').text(`ELETRCISTA: ${electricianName.toUpperCase()}`, 60, 50);
+          doc.font('Helvetica-Bold').fontSize(14).fillColor('#0284c7').text(`ELETRICISTA: ${electricianName.toUpperCase()}`, 60, 50);
           doc.moveDown(1.5);
           doc.fillColor('#000000');
 
@@ -206,7 +209,10 @@ export class ReportController {
             if (doc.y > 600) doc.addPage();
             const startY = doc.y;
             doc.rect(50, startY, 512, 22).fill('#f1f5f9');
-            doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(11).text(`${format(new Date(d.date), 'dd/MM/yyyy')} - ${d.location}`, 60, startY + 6);
+            
+            // Safe date formatting
+            const displayDate = d.date instanceof Date ? format(d.date, 'dd/MM/yyyy') : format(new Date(d.date), 'dd/MM/yyyy');
+            doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(11).text(`${displayDate} - ${d.location}`, 60, startY + 6);
             doc.moveDown(0.8);
             
             doc.fillColor('#334155').font('Helvetica-Oblique').fontSize(10).text(`Descrição: ${d.description}`, { lineGap: 2 });
@@ -401,8 +407,9 @@ export class ReportController {
         const finalBuffer = await pdfGenerationPromise;
         console.log(`[ReportController.downloadPdf] Sending PDF buffer: ${finalBuffer.length} bytes`);
         
+        const safeStart = (start as string).replace(/\//g, '-');
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename=relatorio-${range}-${start}.pdf`);
+        res.setHeader('Content-Disposition', `attachment; filename=relatorio-${range}-${safeStart}.pdf`);
         res.send(finalBuffer);
         
       } catch (pdfError) {
@@ -509,9 +516,10 @@ export class ReportController {
           recoveredTotals[key].quantity += m.quantity;
         });
 
+        const displayDate = d.date instanceof Date ? format(d.date, 'dd/MM/yyyy') : format(new Date(d.date), 'dd/MM/yyyy');
         children.push(new Paragraph({
           children: [
-            new TextRun({ text: `DATA: ${format(new Date(d.date), 'dd/MM/yyyy')} - LOCAL: ${d.location}`, bold: true, size: 22 })
+            new TextRun({ text: `DATA: ${displayDate} - LOCAL: ${d.location}`, bold: true, size: 22 })
           ],
           spacing: { before: 200 }
         }));
@@ -575,8 +583,9 @@ export class ReportController {
       });
 
       const buffer = await Packer.toBuffer(doc);
+      const safeStart = (start as string).replace(/\//g, '-');
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-      res.setHeader('Content-Disposition', `attachment; filename=relatorio-${range}-${start}.docx`);
+      res.setHeader('Content-Disposition', `attachment; filename=relatorio-${range}-${safeStart}.docx`);
       res.send(buffer);
     } catch (error) {
       console.error('[ReportController.downloadDocx] Error:', error);
