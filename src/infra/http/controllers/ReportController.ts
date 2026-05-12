@@ -5,6 +5,8 @@ import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, Width
 import { startOfWeek, endOfWeek, format, subDays, startOfDay, endOfDay, parse, startOfMonth, endOfMonth, startOfYear, endOfYear } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import axios from 'axios';
+import fs from 'fs';
+import path from 'path';
 import { AuthRequest } from '../middlewares/auth.middleware.ts';
 
 export class ReportController {
@@ -148,25 +150,48 @@ export class ReportController {
       try {
         console.log('[ReportController.downloadPdf] Loading fonts and assets...');
         
-        // --- LOAD FONTS AND LOGO ---
-        const [logoRes, fontRegularRes, fontBoldRes, fontItalicRes] = await Promise.allSettled([
-          axios.get('https://i.postimg.cc/W3n0DdqH/pref-logo-sha.png', { responseType: 'arraybuffer', timeout: 8000, headers: { 'User-Agent': 'Mozilla/5.0' } }),
-          axios.get('https://github.com/google/fonts/raw/main/apache/roboto/static/Roboto-Regular.ttf', { responseType: 'arraybuffer', timeout: 10000 }),
-          axios.get('https://github.com/google/fonts/raw/main/apache/roboto/static/Roboto-Bold.ttf', { responseType: 'arraybuffer', timeout: 10000 }),
-          axios.get('https://github.com/google/fonts/raw/main/apache/roboto/static/Roboto-Italic.ttf', { responseType: 'arraybuffer', timeout: 10000 })
+        // --- RESOLVE FONT PATHS ---
+        const isProd = process.env.NODE_ENV === 'production';
+        const projectRoot = process.cwd();
+        
+        // In production, esbuild bundle is at dist/server.cjs. 
+        // We copy src/assets/fonts to dist/assets/fonts.
+        const fontsBaseDir = isProd 
+          ? path.resolve(projectRoot, 'dist/assets/fonts')
+          : path.resolve(projectRoot, 'src/assets/fonts');
+
+        const regularPath = path.join(fontsBaseDir, 'Roboto-Regular.ttf');
+        const boldPath = path.join(fontsBaseDir, 'Roboto-Bold.ttf');
+        const italicPath = path.join(fontsBaseDir, 'Roboto-Italic.ttf');
+
+        console.log(`[ReportController.downloadPdf] Environment: ${isProd ? 'PRODUCTION' : 'DEVELOPMENT'}`);
+        console.log(`[ReportController.downloadPdf] Fonts Directory: ${fontsBaseDir}`);
+
+        // Register fonts from filesystem
+        try {
+          if (!fs.existsSync(regularPath)) throw new Error(`Font not found: ${regularPath}`);
+          if (!fs.existsSync(boldPath)) throw new Error(`Font not found: ${boldPath}`);
+          if (!fs.existsSync(italicPath)) throw new Error(`Font not found: ${italicPath}`);
+
+          doc.registerFont('AppFont', regularPath);
+          doc.registerFont('AppFont-Bold', boldPath);
+          doc.registerFont('AppFont-Italic', italicPath);
+          console.log('[ReportController.downloadPdf] Local fonts registered successfully.');
+        } catch (fontRegError) {
+          console.error('[ReportController.downloadPdf] Font Registration Failed:', fontRegError);
+          // If fonts fail to register, pdfkit might try to load its default Helvetica and hit the ENOENT error.
+          // We throw an error early to avoid 500 with cryptic ENOENT.
+          throw new Error(`Dependência de fonte não encontrada no servidor: ${fontRegError instanceof Error ? fontRegError.message : String(fontRegError)}`);
+        }
+
+        const fontRegular = 'AppFont';
+        const fontBold = 'AppFont-Bold';
+        const fontItalic = 'AppFont-Italic';
+
+        // --- LOAD LOGO ---
+        const [logoRes] = await Promise.allSettled([
+          axios.get('https://i.postimg.cc/W3n0DdqH/pref-logo-sha.png', { responseType: 'arraybuffer', timeout: 8000, headers: { 'User-Agent': 'Mozilla/5.0' } })
         ]);
-
-        // Register fonts if successful
-        if (fontRegularRes.status === 'fulfilled') doc.registerFont('AppFont', fontRegularRes.value.data);
-        if (fontBoldRes.status === 'fulfilled') doc.registerFont('AppFont-Bold', fontBoldRes.value.data);
-        if (fontItalicRes.status === 'fulfilled') doc.registerFont('AppFont-Italic', fontItalicRes.value.data);
-
-        // Define font names based on what was loaded, fallback to Helvetica (risky on Render but better than nothing)
-        const fontRegular = fontRegularRes.status === 'fulfilled' ? 'AppFont' : 'Helvetica';
-        const fontBold = fontBoldRes.status === 'fulfilled' ? 'AppFont-Bold' : 'Helvetica-Bold';
-        const fontItalic = fontItalicRes.status === 'fulfilled' ? 'AppFont-Italic' : 'Helvetica-Oblique';
-
-        // --- CAPA PROFISSIONAL ---
         doc.rect(0, 0, 612, 180).fill('#FFFFFF');
         
         if (logoRes.status === 'fulfilled') {
