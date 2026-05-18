@@ -130,15 +130,23 @@ model ReturnedMaterial {
   @@map("returned_materials")
 }
 
+enum ReportType {
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
 model Report {
-  id             String   @id @default(uuid())
-  weekStartDate  DateTime
-  weekEndDate    DateTime
+  id             String     @id @default(uuid())
+  type           ReportType
+  startDate      DateTime
+  endDate        DateTime
+  referenceDate  DateTime   @default(now())
   pdfUrl         String?
   docxUrl        String?
   generatedById  String
-  generatedBy    User     @relation(fields: [generatedById], references: [id])
-  createdAt      DateTime @default(now())
+  generatedBy    User       @relation(fields: [generatedById], references: [id])
+  createdAt      DateTime   @default(now())
 
   @@map("reports")
 }

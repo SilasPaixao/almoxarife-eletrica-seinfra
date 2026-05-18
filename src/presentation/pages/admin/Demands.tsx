@@ -173,9 +173,9 @@ export default function Demands() {
             location: item['Local'] || item['local'] || 'Não especificado',
             description: item['Descrição'] || item['descricao'] || 'Sem descrição',
             clientNumber: item['Número Cliente']?.toString() || item['numero_cliente']?.toString() || '',
-            electricianIds: electrician ? [electrician.id] : (users?.find((u: any) => u.role === 'ELECTRICIAN') ? [users?.find((u: any) => u.role === 'ELECTRICIAN')?.id] : [])
+            electricianIds: electrician ? [electrician.id] : []
           };
-        }).filter(d => d.electricianIds.length > 0);
+        });
 
         if (mappedDemands.length === 0) {
           showFeedback('error', 'Nenhuma demanda válida encontrada para importação. Verifique se os eletricistas estão cadastrados.');
@@ -320,11 +320,17 @@ export default function Demands() {
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-600">
                     <div className="flex flex-wrap gap-1">
-                      {demand.electricians?.map((e: any) => (
-                        <span key={e.id} className="bg-gray-100 px-2 py-0.5 rounded text-xs">
-                          {e.name}
+                      {demand.electricians && demand.electricians.length > 0 ? (
+                        demand.electricians.map((e: any) => (
+                          <span key={e.id} className="bg-gray-100 px-2 py-0.5 rounded text-xs">
+                            {e.name}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded text-[10px] font-bold uppercase animate-pulse border border-red-100">
+                          Não atribuída!
                         </span>
-                      ))}
+                      )}
                     </div>
                   </td>
                   <td className="px-6 py-4">
@@ -440,7 +446,7 @@ export default function Demands() {
                 ))}
               </div>
               {formData.electricianIds.length === 0 && (
-                <p className="text-red-500 text-[10px] mt-1 font-medium">* Selecione pelo menos um eletricista.</p>
+                <p className="text-blue-500 text-[10px] mt-1 font-medium italic">Opcional: Você pode atribuir eletricistas agora ou depois.</p>
               )}
             </div>
             

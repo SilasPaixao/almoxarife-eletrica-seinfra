@@ -47,7 +47,7 @@ export class DemandController {
           location,
           clientNumber,
           electricians: {
-            connect: electricianIds.map((id: string) => ({ id }))
+            connect: (electricianIds || []).map((id: string) => ({ id }))
           },
           createdById: req.user!.id,
           plannedMaterials: {

@@ -57,7 +57,6 @@ export class UserController {
         return res.status(400).json({ error: 'Você não pode excluir sua própria conta.' });
       }
 
-      // Fetch user to check role
       const userToDelete = await prisma.user.findUnique({
         where: { id: userId },
         select: { role: true }
@@ -65,11 +64,6 @@ export class UserController {
 
       if (!userToDelete) {
         return res.status(404).json({ error: 'Usuário não encontrado.' });
-      }
-
-      // Admins cannot be deleted
-      if (userToDelete.role === 'ADMIN') {
-        return res.status(403).json({ error: 'Administradores não podem ser excluídos.' });
       }
 
       await prisma.user.delete({

@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Layout from '../../components/Layout.tsx';
 import api from '../../services/api.ts';
+import { useAuth } from '../../context/AuthContext.tsx';
 import { Check, X, Shield, User, Loader2, Trash2, AlertCircle, Info } from 'lucide-react';
 
 export default function Users() {
   const queryClient = useQueryClient();
+  const { user: currentUser } = useAuth();
   const [confirmDelete, setConfirmDelete] = useState<{ id: string, name: string } | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
@@ -173,7 +175,7 @@ export default function Users() {
                           <User className="h-5 w-5" />
                         </button>
                         
-                        {u.role !== 'ADMIN' && (
+                        {u.id !== currentUser?.id && (
                           <button 
                             onClick={(e) => {
                               console.log('Button clicked for user:', u.name);

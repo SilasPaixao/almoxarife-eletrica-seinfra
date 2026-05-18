@@ -2,7 +2,7 @@ import { Response } from 'express';
 import prisma from '../../database/prisma.ts';
 import PDFDocument from 'pdfkit';
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType, ImageRun } from 'docx';
-import { startOfWeek, endOfWeek, format, subDays, startOfDay, endOfDay, parse, startOfMonth, endOfMonth, startOfYear, endOfYear } from 'date-fns';
+import { startOfWeek, endOfWeek, format, subDays, startOfDay, endOfDay, parse, startOfMonth, endOfMonth, startOfYear, endOfYear, eachWeekOfInterval, eachMonthOfInterval, eachYearOfInterval, isWithinInterval } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import axios from 'axios';
 import fs from 'fs';
@@ -10,31 +10,123 @@ import path from 'path';
 import { AuthRequest } from '../middlewares/auth.middleware.ts';
 
 export class ReportController {
-  static async getReportData(req: AuthRequest, res: Response) {
+  static async getAvailablePeriods(req: AuthRequest, res: Response) {
     try {
       const { range = 'weekly' } = req.query;
+      
+      const oldestDemand = await prisma.demand.findFirst({
+        orderBy: { date: 'asc' },
+        select: { date: true }
+      });
+
+      if (!oldestDemand) {
+        return res.json([]);
+      }
+
+      // Use a fixed reference to avoid shifts during execution
       const now = new Date();
+      const startDate = startOfDay(oldestDemand.date);
+      const endDate = endOfDay(now);
+
+      let intervals: { start: Date; end: Date }[] = [];
+
+      if (range === 'monthly') {
+        const months = eachMonthOfInterval({ start: startDate, end: endDate });
+        intervals = months.map(m => ({
+          start: startOfDay(startOfMonth(m)),
+          end: endOfDay(endOfMonth(m))
+        }));
+      } else if (range === 'yearly') {
+        const years = eachYearOfInterval({ start: startDate, end: endDate });
+        intervals = years.map(y => ({
+          start: startOfDay(startOfYear(y)),
+          end: endOfDay(endOfYear(y))
+        }));
+      } else {
+        // Weekly
+        const weeks = eachWeekOfInterval({ start: startDate, end: endDate }, { weekStartsOn: 0 });
+        intervals = weeks.map(w => ({
+          start: startOfDay(startOfWeek(w, { weekStartsOn: 0 })),
+          end: endOfDay(endOfWeek(w, { weekStartsOn: 0 }))
+        }));
+      }
+
+      intervals.reverse();
+
+      const savedReports = await prisma.report.findMany({
+        where: { type: (range as string).toUpperCase() as any }
+      });
+
+      // Fetch all concluded demands once for performance
+      const allDemandDates = await prisma.demand.findMany({
+        where: {
+          date: { gte: startDate, lte: endDate },
+          status: 'CONCLUDED'
+        },
+        select: { date: true }
+      });
+
+      const periods = intervals.map(interval => {
+        const isSaved = savedReports.some(sr => 
+          sr.startDate.getTime() === interval.start.getTime() && 
+          sr.endDate.getTime() === interval.end.getTime()
+        );
+
+        const demandCount = allDemandDates.filter(d => 
+          d.date >= interval.start && d.date <= interval.end
+        ).length;
+
+        const reportId = savedReports.find(sr => 
+          sr.startDate.getTime() === interval.start.getTime() && 
+          sr.endDate.getTime() === interval.end.getTime()
+        )?.id;
+
+        return {
+          start: format(interval.start, 'dd/MM/yyyy'),
+          end: format(interval.end, 'dd/MM/yyyy'),
+          referenceDate: interval.start.toISOString(),
+          isSaved,
+          reportId,
+          demandCount
+        };
+      });
+
+      res.json(periods);
+    } catch (error) {
+      console.error('[ReportController.getAvailablePeriods] Error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  static async getReportData(req: AuthRequest, res: Response) {
+    try {
+      const { range = 'weekly', date } = req.query;
+      // We parse the ISO date directly to maintain the exactly same reference point
+      const referenceDate = date ? new Date(String(date)) : startOfDay(new Date());
+      
       let startRange, endRange;
 
       if (range === 'monthly') {
-        startRange = startOfDay(startOfMonth(now));
-        endRange = endOfDay(endOfMonth(now));
+        startRange = startOfDay(startOfMonth(referenceDate));
+        endRange = endOfDay(endOfMonth(referenceDate));
       } else if (range === 'yearly') {
-        startRange = startOfDay(startOfYear(now));
-        endRange = endOfDay(endOfYear(now));
+        startRange = startOfDay(startOfYear(referenceDate));
+        endRange = endOfDay(endOfYear(referenceDate));
       } else {
         // Weekly default
-        startRange = startOfDay(startOfWeek(now, { weekStartsOn: 1 }));
-        endRange = endOfDay(subDays(endOfWeek(now, { weekStartsOn: 1 }), 1));
+        startRange = startOfDay(startOfWeek(referenceDate, { weekStartsOn: 0 }));
+        endRange = endOfDay(endOfWeek(referenceDate, { weekStartsOn: 0 }));
       }
+
+      console.log(`[ReportController.getReportData] Filtering from ${startRange.toISOString()} to ${endRange.toISOString()}`);
 
       const demands = await prisma.demand.findMany({
         where: {
           date: { gte: startRange, lte: endRange },
-          status: { in: ['CONCLUDED'] }
+          status: 'CONCLUDED'
         },
         include: {
-          electricians: true,
+          electricians: { select: { id: true, name: true } },
           plannedMaterials: { include: { material: true } },
           usedMaterials: { include: { material: true } },
           returnedMaterials: { include: { material: true } },
@@ -43,11 +135,18 @@ export class ReportController {
       });
 
       const grouped = demands.reduce((acc: any, demand: any) => {
-        demand.electricians.forEach((e: any) => {
-          const name = e.name;
+        if (demand.electricians && demand.electricians.length > 0) {
+          demand.electricians.forEach((e: any) => {
+            const name = e.name;
+            if (!acc[name]) acc[name] = [];
+            acc[name].push(demand);
+          });
+        } else {
+          // Fallback group for demands without linked user (audit integrity)
+          const name = "Não Atribuído / Outros";
           if (!acc[name]) acc[name] = [];
           acc[name].push(demand);
-        });
+        }
         return acc;
       }, {});
 
@@ -60,17 +159,104 @@ export class ReportController {
         include: { material: true }
       });
 
+      const savedReport = await prisma.report.findFirst({
+        where: {
+          type: (range as string).toUpperCase() as any,
+          startDate: startRange,
+          endDate: endRange
+        }
+      });
+
       res.json({
         period: {
           type: range,
           start: format(startRange, 'dd/MM/yyyy'),
           end: format(endRange, 'dd/MM/yyyy'),
+          referenceDate: startRange.toISOString(),
         },
         data: grouped,
-        recovered: standaloneRecovered
+        demandsCount: demands.length,
+        recovered: standaloneRecovered,
+        isSaved: !!savedReport,
+        savedId: savedReport?.id
       });
     } catch (error) {
       console.error('[ReportController.getReportData] Error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  static async listReportsHistory(req: AuthRequest, res: Response) {
+    try {
+      const reports = await prisma.report.findMany({
+        orderBy: { createdAt: 'desc' },
+        include: { generatedBy: { select: { name: true } } }
+      });
+      res.json(reports);
+    } catch (error) {
+      console.error('[ReportController.listReportsHistory] Error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  static async saveReport(req: AuthRequest, res: Response) {
+    try {
+      const { type, startDate, endDate, referenceDate } = req.body;
+
+      if (!type || !startDate || !endDate) {
+        return res.status(400).json({ error: 'Missing required report fields' });
+      }
+
+      const start = startOfDay(new Date(startDate));
+      const end = endOfDay(new Date(endDate));
+
+      // Avoid duplicates for same period
+      let report = await prisma.report.findFirst({
+        where: {
+          type: type as any,
+          startDate: start,
+          endDate: end
+        }
+      });
+
+      if (!report) {
+        report = await prisma.report.create({
+          data: {
+            type: type as any,
+            startDate: start,
+            endDate: end,
+            referenceDate: referenceDate ? new Date(referenceDate) : new Date(),
+            generatedById: req.user!.id
+          }
+        });
+      }
+
+      res.json(report);
+    } catch (error) {
+      console.error('[ReportController.saveReport] Error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  static async deleteReport(req: AuthRequest, res: Response) {
+    try {
+      const { id } = req.params;
+
+      const report = await prisma.report.findUnique({
+        where: { id }
+      });
+
+      if (!report) {
+        return res.status(404).json({ error: 'Report not found' });
+      }
+
+      await prisma.report.delete({
+        where: { id }
+      });
+
+      res.status(204).send();
+    } catch (error) {
+      console.error('[ReportController.deleteReport] Error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   }

@@ -107,11 +107,15 @@ export default function Dashboard() {
                           <ClipboardList className="h-3 w-3 mr-1" />
                           {format(new Date(demand.date), "dd/MM/yyyy", { locale: ptBR })}
                         </span>
-                        {user?.role === 'ADMIN' && demand.electricians && (
+                        {user?.role === 'ADMIN' && (
                           <div className="flex gap-1">
-                            {demand.electricians.map((e: any) => (
-                              <span key={e.id} className="bg-gray-100 px-2 py-0.5 rounded uppercase text-[10px]">{e.name}</span>
-                            ))}
+                            {demand.electricians && demand.electricians.length > 0 ? (
+                              demand.electricians.map((e: any) => (
+                                <span key={e.id} className="bg-gray-100 px-2 py-0.5 rounded uppercase text-[10px]">{e.name}</span>
+                              ))
+                            ) : (
+                               <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded uppercase text-[10px] font-bold border border-red-100 animate-pulse">Não atribuída!</span>
+                            )}
                           </div>
                         )}
                       </div>
