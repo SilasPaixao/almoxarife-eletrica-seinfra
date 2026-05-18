@@ -14,18 +14,21 @@ export class ReportController {
     try {
       const { range = 'weekly' } = req.query;
       
+      // Use January 1st, 2026 as the minimum start date
+      const minStartDate = new Date(2026, 0, 1);
       const oldestDemand = await prisma.demand.findFirst({
+        where: { date: { gte: minStartDate } },
         orderBy: { date: 'asc' },
         select: { date: true }
       });
 
-      if (!oldestDemand) {
-        return res.json([]);
+      // If no demands after 2026, or oldest demand is after 2026, use the later of the two
+      let startDate = minStartDate;
+      if (oldestDemand && oldestDemand.date > minStartDate) {
+        startDate = startOfDay(oldestDemand.date);
       }
-
-      // Use a fixed reference to avoid shifts during execution
+      
       const now = new Date();
-      const startDate = startOfDay(oldestDemand.date);
       const endDate = endOfDay(now);
 
       let intervals: { start: Date; end: Date }[] = [];
