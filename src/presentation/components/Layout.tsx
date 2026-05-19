@@ -14,7 +14,8 @@ import {
   Truck,
   Ruler,
   Clock,
-  RotateCw
+  RotateCw,
+  Wrench
 } from 'lucide-react';
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -28,7 +29,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { name: 'Materiais', path: '/admin/materials', icon: Package },
     { name: 'Materiais Recuperados', path: '/admin/recovered', icon: RotateCw },
     { name: 'Veículos', path: '/admin/vehicles', icon: Truck },
-    { name: 'Escadas', path: '/admin/ladders', icon: Ruler },
+    { name: 'Ferramentas', path: '/admin/tools', icon: Wrench },
     { name: 'Usuários', path: '/admin/users', icon: Users },
     { name: 'Relatórios', path: '/admin/reports', icon: FileText },
   ] : [

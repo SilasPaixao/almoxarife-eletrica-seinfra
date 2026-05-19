@@ -3,13 +3,13 @@ import prisma from '../../database/prisma.ts';
 import { AuthRequest } from '../middlewares/auth.middleware.ts';
 import { AuditService } from '../../database/audit.ts';
 
-export class LadderController {
+export class ToolController {
   static async getAll(req: AuthRequest, res: Response) {
     try {
-      const ladders = await prisma.ladder.findMany({
+      const tools = await prisma.tool.findMany({
         orderBy: { name: 'asc' },
       });
-      res.json(ladders);
+      res.json(tools);
     } catch (error) {
       res.status(500).json({ error: 'Internal server error' });
     }
@@ -18,12 +18,12 @@ export class LadderController {
   static async create(req: AuthRequest, res: Response) {
     try {
       const { name, code } = req.body;
-      const ladder = await prisma.ladder.create({
+      const tool = await prisma.tool.create({
         data: { name, code },
       });
 
-      await AuditService.log('CREATE', 'LADDER', req.user!.id, ladder.id, { name, code });
-      res.status(201).json(ladder);
+      await AuditService.log('CREATE', 'TOOL', req.user!.id, tool.id, { name, code });
+      res.status(201).json(tool);
     } catch (error) {
       res.status(500).json({ error: 'Internal server error' });
     }
@@ -33,13 +33,13 @@ export class LadderController {
     try {
       const { id } = req.params;
       const { name, code } = req.body;
-      const ladder = await prisma.ladder.update({
+      const tool = await prisma.tool.update({
         where: { id },
         data: { name, code },
       });
 
-      await AuditService.log('UPDATE', 'LADDER', req.user!.id, id, { name, code });
-      res.json(ladder);
+      await AuditService.log('UPDATE', 'TOOL', req.user!.id, id, { name, code });
+      res.json(tool);
     } catch (error) {
       res.status(500).json({ error: 'Internal server error' });
     }
@@ -48,9 +48,9 @@ export class LadderController {
   static async delete(req: AuthRequest, res: Response) {
     try {
       const { id } = req.params;
-      await prisma.ladder.delete({ where: { id } });
+      await prisma.tool.delete({ where: { id } });
 
-      await AuditService.log('DELETE', 'LADDER', req.user!.id, id);
+      await AuditService.log('DELETE', 'TOOL', req.user!.id, id);
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ error: 'Internal server error' });

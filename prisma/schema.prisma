@@ -76,7 +76,7 @@ model Demand {
   transformerNumber    String?
   observation          String?
   vehicles             String[]       // Array of strings for simplicity as per requirement
-  ladder               String?
+  tools                String[]       // Array of strings for tools used
   
   plannedMaterials     DemandMaterial[]
   usedMaterials        UsedMaterial[]
@@ -174,12 +174,12 @@ model Vehicle {
   @@map("vehicles")
 }
 
-model Ladder {
+model Tool {
   id        String   @id @default(uuid())
   name      String
   code      String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@map("ladders")
+  @@map("tools")
 }

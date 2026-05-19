@@ -10,7 +10,7 @@ import Demands from './presentation/pages/admin/Demands.tsx';
 import DemandDetails from './presentation/pages/DemandDetails.tsx';
 import Reports from './presentation/pages/admin/Reports.tsx';
 import Vehicles from './presentation/pages/admin/Vehicles.tsx';
-import Ladders from './presentation/pages/admin/Ladders.tsx';
+import Tools from './presentation/pages/admin/Tools.tsx';
 import RecoveredMaterials from './presentation/pages/admin/RecoveredMaterials.tsx';
 import ProtectedRoute from './presentation/components/ProtectedRoute.tsx';
 
@@ -35,7 +35,7 @@ export default function App() {
               <Route path="/admin/demands" element={<Demands />} />
               <Route path="/admin/reports" element={<Reports />} />
               <Route path="/admin/vehicles" element={<Vehicles />} />
-              <Route path="/admin/ladders" element={<Ladders />} />
+              <Route path="/admin/tools" element={<Tools />} />
               <Route path="/admin/recovered" element={<RecoveredMaterials />} />
             </Route>
 

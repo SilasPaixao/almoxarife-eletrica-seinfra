@@ -12,10 +12,11 @@ import {
   Package, 
   CheckCircle, 
   Camera, 
+  Image,
   Loader2, 
   AlertCircle,
   Truck,
-  Ruler,
+  Wrench,
   Info,
   Pencil,
   Plus,
@@ -34,6 +35,7 @@ export default function DemandDetails() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
   
   const [confirmDialog, setConfirmDialog] = useState({
     isOpen: false,
@@ -47,7 +49,7 @@ export default function DemandDetails() {
   const [usedMaterials, setUsedMaterials] = useState<any[]>([]);
   const [replacedMaterials, setReplacedMaterials] = useState<any[]>([]);
   const [vehicles, setVehicles] = useState<string[]>([]);
-  const [ladder, setLadder] = useState('');
+  const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [trafo, setTrafo] = useState('');
   const [obs, setObs] = useState('');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null);
@@ -60,6 +62,7 @@ export default function DemandDetails() {
 
   // Edit Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isEditingExecution, setIsEditingExecution] = useState(false);
   const [editFormData, setEditFormData] = useState({
     date: '',
     location: '',
@@ -70,7 +73,7 @@ export default function DemandDetails() {
     transformerNumber: '',
     observation: '',
     vehicles: [] as string[],
-    ladder: '',
+    tools: [] as string[],
     usedMaterials: [] as { materialId: string; quantity: number }[],
     returnedMaterials: [] as { materialId: string; quantity: number }[],
     recoveredMaterials: [] as { materialId: string; quantity: number }[]
@@ -108,9 +111,9 @@ export default function DemandDetails() {
     queryFn: async () => (await api.get('/vehicles')).data,
   });
 
-  const { data: registeredLadders } = useQuery({
-    queryKey: ['ladders'],
-    queryFn: async () => (await api.get('/ladders')).data,
+  const { data: registeredTools } = useQuery({
+    queryKey: ['tools'],
+    queryFn: async () => (await api.get('/tools')).data,
   });
 
   // Calculate surplus materials (planned - used)
@@ -118,9 +121,9 @@ export default function DemandDetails() {
     if (!demand?.plannedMaterials) return [];
     
     return demand.plannedMaterials.map((pm: any) => {
-      const used = usedMaterials.find(um => um.materialId === pm.materialId);
-      const usedQty = used ? used.quantity : 0;
-      const surplusQty = pm.quantity - usedQty;
+      const used = usedMaterials.find(um => String(um.materialId) === String(pm.materialId));
+      const usedQty = used ? Number(used.quantity) : 0;
+      const surplusQty = Number(pm.quantity) - usedQty;
       
       return {
         ...pm.material,
@@ -130,6 +133,17 @@ export default function DemandDetails() {
       };
     }).filter((m: any) => m.surplusQty > 0);
   }, [demand?.plannedMaterials, usedMaterials]);
+
+  // Pre-populate used materials from planned ones for better UX and consistency
+  React.useEffect(() => {
+    if (demand && demand.status === 'PENDING' && demand.plannedMaterials && usedMaterials.length === 0) {
+      const initial = demand.plannedMaterials.map((pm: any) => ({
+        materialId: pm.materialId,
+        quantity: 0
+      }));
+      setUsedMaterials(initial);
+    }
+  }, [demand]);
 
   const filteredMaterials = materials?.filter((m: any) => 
     m.name.toLowerCase().includes(materialSearch.toLowerCase())
@@ -151,6 +165,7 @@ export default function DemandDetails() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['demands'] });
       queryClient.invalidateQueries({ queryKey: ['demand', id] });
+      setIsEditingExecution(false);
       setFeedback({ type: 'success', message: 'Demanda enviada para aprovação do administrador!' });
       setTimeout(() => navigate('/'), 2000);
     },
@@ -225,9 +240,23 @@ export default function DemandDetails() {
     setVehicles(prev => prev.includes(v) ? prev.filter(item => item !== v) : [...prev, v]);
   };
 
+  const handleToolToggle = (t: string) => {
+    setSelectedTools(prev => {
+      const isNone = t.toLowerCase() === 'nenhuma';
+      if (isNone) {
+        return prev.includes(t) ? [] : [t];
+      } else {
+        const withoutNone = prev.filter(item => item.toLowerCase() !== 'nenhuma');
+        return withoutNone.includes(t)
+          ? withoutNone.filter(item => item !== t)
+          : [...withoutNone, t];
+      }
+    });
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!photo) {
+    if (!photo && !isEditingExecution) {
       setFeedback({ type: 'error', message: 'A foto do serviço é obrigatória!' });
       return;
     }
@@ -239,17 +268,15 @@ export default function DemandDetails() {
       setFeedback({ type: 'error', message: 'Informe o veículo/equipamento utilizado!' });
       return;
     }
-    if (!ladder) {
-      setFeedback({ type: 'error', message: 'Informe a escada utilizada!' });
-      return;
-    }
 
     const formData = new FormData();
-    formData.append('photo', photo);
+    if (photo) {
+      formData.append('photo', photo);
+    }
     formData.append('usedMaterials', JSON.stringify(usedMaterials));
     formData.append('replacedMaterials', JSON.stringify(replacedMaterials));
     formData.append('vehicles', vehicles.join(','));
-    formData.append('ladder', ladder);
+    formData.append('tools', selectedTools.join(','));
     formData.append('transformerNumber', trafo);
     formData.append('observation', obs);
 
@@ -258,6 +285,22 @@ export default function DemandDetails() {
 
   const handleEditClick = () => {
     if (!demand) return;
+
+    if (user?.role === 'ELECTRICIAN') {
+      if (demand.status === 'PENDING_APPROVAL') {
+        // For electricians in pending approval, we "edit" the execution
+        setUsedMaterials(demand.usedMaterials?.map((m: any) => ({ materialId: m.materialId, quantity: m.quantity })) || []);
+        setReplacedMaterials(demand.returnedMaterials?.filter((m: any) => m.type === 'DEFECTIVE').map((m: any) => ({ materialId: m.materialId, quantity: m.quantity })) || []);
+        setVehicles(demand.vehicles || []);
+        setSelectedTools(demand.tools || []);
+        setTrafo(demand.transformerNumber || '');
+        setObs(demand.observation || '');
+        setPhotoPreview(demand.photoUrl || null);
+        setIsEditingExecution(true);
+      }
+      return;
+    }
+
     setEditFormData({
       date: format(new Date(demand.date), 'yyyy-MM-dd'),
       location: demand.location,
@@ -271,7 +314,7 @@ export default function DemandDetails() {
       transformerNumber: demand.transformerNumber || '',
       observation: demand.observation || '',
       vehicles: demand.vehicles || [],
-      ladder: demand.ladder || '',
+      tools: demand.tools || [],
       usedMaterials: demand.usedMaterials?.map((um: any) => ({
         materialId: um.materialId,
         quantity: um.quantity
@@ -337,7 +380,7 @@ export default function DemandDetails() {
           <ArrowLeft className="h-5 w-5 mr-1" /> Voltar
         </button>
         <div className="flex items-center gap-3">
-          {user?.role === 'ADMIN' && (
+          {(user?.role === 'ADMIN' || (user?.role === 'ELECTRICIAN' && demand.status === 'PENDING_APPROVAL')) && (
             <div className="flex gap-2">
               <button
                 onClick={handleEditClick}
@@ -346,20 +389,22 @@ export default function DemandDetails() {
               >
                 <Pencil className="h-5 w-5" />
               </button>
-              <button
-                onClick={() => {
-                  setConfirmDialog({
-                    isOpen: true,
-                    title: 'Excluir Demanda',
-                    message: 'Tem certeza que deseja excluir esta demanda definitivamente?',
-                    onConfirm: () => deleteMutation.mutate()
-                  });
-                }}
-                className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100"
-                title="Excluir Demanda"
-              >
-                <Trash2 className="h-5 w-5" />
-              </button>
+              {user?.role === 'ADMIN' && (
+                <button
+                  onClick={() => {
+                    setConfirmDialog({
+                      isOpen: true,
+                      title: 'Excluir Demanda',
+                      message: 'Tem certeza que deseja excluir esta demanda definitivamente?',
+                      onConfirm: () => deleteMutation.mutate()
+                    });
+                  }}
+                  className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100"
+                  title="Excluir Demanda"
+                >
+                  <Trash2 className="h-5 w-5" />
+                </button>
+              )}
             </div>
           )}
           <StatusBadge status={demand.status} />
@@ -436,26 +481,85 @@ export default function DemandDetails() {
 
         {/* Action Form / Completion Summary */}
         <div className="lg:col-span-2">
-          {demand.status === 'PENDING' && isElectrician ? (
+          {((demand.status === 'PENDING' && isElectrician) || (isElectrician && demand.status === 'PENDING_APPROVAL' && isEditingExecution)) ? (
             <form onSubmit={handleSubmit} className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 space-y-8">
-              <h2 className="text-2xl font-bold text-gray-900 border-b pb-4">Concluir Serviço</h2>
+              <div className="flex justify-between items-center border-b pb-4">
+                <h2 className="text-2xl font-bold text-gray-900">{isEditingExecution ? 'Editar Execução' : 'Concluir Serviço'}</h2>
+                {isEditingExecution && (
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      setIsEditingExecution(false);
+                      setPhoto(null);
+                      setPhotoPreview(demand?.photoUrl || null);
+                    }}
+                    className="text-gray-500 hover:text-gray-700 text-sm font-medium"
+                  >
+                    Cancelar Edição
+                  </button>
+                )}
+              </div>
               
               {/* Photo Upload */}
               <div>
                 <label className="block text-sm font-bold text-gray-700 mb-4">Foto do Serviço (Obrigatório)</label>
-                <div 
-                  className="w-full h-64 border-2 border-dashed border-gray-300 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 transition-all overflow-hidden relative"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  {photoPreview ? (
-                    <img src={photoPreview} alt="Preview" className="w-full h-full object-cover" />
-                  ) : (
-                    <>
-                      <Camera className="h-12 w-12 text-gray-400 mb-2" />
-                      <p className="text-sm text-gray-500">Toque para tirar foto ou selecionar arquivo</p>
-                    </>
-                  )}
-                  <input ref={fileInputRef} type="file" className="hidden" accept="image/*" capture="environment" onChange={handleFileChange} />
+                <div className="space-y-4">
+                  <div 
+                    className="w-full h-64 border-2 border-dashed border-gray-300 rounded-2xl flex flex-col items-center justify-center overflow-hidden relative bg-gray-50 shadow-inner"
+                  >
+                    {photoPreview ? (
+                      <>
+                        <img src={photoPreview} alt="Preview" className="w-full h-full object-cover" />
+                        <button 
+                          type="button"
+                          onClick={() => { setPhoto(null); setPhotoPreview(null); }}
+                          className="absolute top-2 right-2 bg-red-600 text-white p-2 rounded-full shadow-lg hover:bg-red-700 transition-colors"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </>
+                    ) : (
+                      <div className="text-center p-6">
+                        <Camera className="h-12 w-12 text-gray-300 mx-auto mb-2" />
+                        <p className="text-xs text-gray-400 font-medium">Nenhuma foto selecionada</p>
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <button 
+                      type="button" 
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex flex-col items-center justify-center gap-2 p-4 bg-blue-50 text-blue-700 rounded-2xl font-bold hover:bg-blue-100 transition-all border border-blue-100 shadow-sm"
+                    >
+                      <Camera className="h-6 w-6" />
+                      <span className="text-xs">Tirar Foto</span>
+                    </button>
+                    <button 
+                      type="button" 
+                      onClick={() => galleryInputRef.current?.click()}
+                      className="flex flex-col items-center justify-center gap-2 p-4 bg-gray-50 text-gray-700 rounded-2xl font-bold hover:bg-gray-100 transition-all border border-gray-200 shadow-sm"
+                    >
+                      <Image className="h-6 w-6" />
+                      <span className="text-xs">Carregar Galeria</span>
+                    </button>
+                  </div>
+                  
+                  <input 
+                    ref={fileInputRef} 
+                    type="file" 
+                    className="hidden" 
+                    accept="image/*" 
+                    capture="environment" 
+                    onChange={handleFileChange} 
+                  />
+                  <input 
+                    ref={galleryInputRef} 
+                    type="file" 
+                    className="hidden" 
+                    accept="image/*" 
+                    onChange={handleFileChange} 
+                  />
                 </div>
               </div>
 
@@ -506,10 +610,15 @@ export default function DemandDetails() {
                         <div className="flex items-center gap-3">
                           <input 
                             type="number" 
-                            min="1" 
+                            min="0"
                             className="w-20 p-2 border border-blue-200 rounded-lg text-center"
-                            value={m.quantity}
-                            onChange={(e) => setUsedMaterials(prev => prev.map(item => item.materialId === m.materialId ? { ...item, quantity: parseInt(e.target.value) || 0 } : item))}
+                            value={String(m.quantity)}
+                            onChange={(e) => {
+                              const val = e.target.value === '' ? 0 : Number(e.target.value);
+                              setUsedMaterials(prev => prev.map(item => 
+                                item.materialId === m.materialId ? { ...item, quantity: val } : item
+                              ));
+                            }}
                           />
                           <button 
                             type="button"
@@ -597,10 +706,15 @@ export default function DemandDetails() {
                         <div className="flex items-center gap-3">
                           <input 
                             type="number" 
-                            min="1" 
+                            min="0" 
                             className="w-20 p-2 border border-red-200 rounded-lg text-center"
-                            value={m.quantity}
-                            onChange={(e) => setReplacedMaterials(prev => prev.map(item => item.materialId === m.materialId ? { ...item, quantity: parseInt(e.target.value) } : item))}
+                            value={String(m.quantity)}
+                            onChange={(e) => {
+                              const val = e.target.value === '' ? 0 : Number(e.target.value);
+                              setReplacedMaterials(prev => prev.map(item => 
+                                item.materialId === m.materialId ? { ...item, quantity: val } : item
+                              ));
+                            }}
                           />
                           <button 
                             type="button"
@@ -640,26 +754,26 @@ export default function DemandDetails() {
                 </div>
               </div>
 
-              {/* Ladder Selection */}
+              {/* Tools */}
               <div>
-                <label className="block text-sm font-bold text-gray-700 mb-4">Escada Utilizada (Obrigatório)</label>
+                <label className="block text-sm font-bold text-gray-700 mb-4">Ferramentas Utilizadas</label>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                  {registeredLadders?.map((l: any) => (
+                  {registeredTools?.map((t: any) => (
                     <button
-                      key={l.id}
+                      key={t.id}
                       type="button"
-                      onClick={() => setLadder(l.name)}
+                      onClick={() => handleToolToggle(t.name)}
                       className={`
                         p-3 rounded-xl border-2 text-sm font-medium transition-all flex items-center justify-center
-                        ${ladder === l.name ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-200 text-gray-600 hover:border-blue-300'}
+                        ${selectedTools.includes(t.name) ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-200 text-gray-600 hover:border-blue-300'}
                       `}
                     >
-                      <Ruler className={`h-4 w-4 mr-2 ${ladder === l.name ? 'text-white' : 'text-gray-400'}`} />
-                      {l.name}
+                      <Wrench className={`h-4 w-4 mr-2 ${selectedTools.includes(t.name) ? 'text-white' : 'text-gray-400'}`} />
+                      {t.name}
                     </button>
                   ))}
-                  {registeredLadders?.length === 0 && (
-                    <p className="col-span-full text-sm text-gray-400 italic">Nenhuma escada cadastrada pelo sistema.</p>
+                  {registeredTools?.length === 0 && (
+                    <p className="col-span-full text-sm text-gray-400 italic">Nenhuma ferramenta cadastrada pelo sistema.</p>
                   )}
                 </div>
               </div>
@@ -695,7 +809,7 @@ export default function DemandDetails() {
               >
                 {finishMutation.isPending ? <Loader2 className="animate-spin h-6 w-6" /> : (
                   <>
-                    <CheckCircle className="h-6 w-6 mr-2" /> FINALIZAR SERVIÇO
+                    <CheckCircle className="h-6 w-6 mr-2" /> {isEditingExecution ? 'SALVAR ALTERAÇÕES' : 'FINALIZAR SERVIÇO'}
                   </>
                 )}
               </button>
@@ -784,12 +898,15 @@ export default function DemandDetails() {
                   </div>
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-gray-800 mb-4 uppercase">Escada Utilizada</h3>
-                  {demand.ladder ? (
-                    <span className="px-3 py-1 bg-orange-50 text-orange-700 rounded-lg text-sm font-medium border border-orange-200">
-                      {demand.ladder}
-                    </span>
-                  ) : <p className="text-gray-500 text-sm italic">Nenhuma escada informada.</p>}
+                  <h3 className="text-sm font-bold text-gray-800 mb-4 uppercase">Ferramentas Utilizadas</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {demand.tools?.map((t: string) => (
+                      <span key={t} className="px-3 py-1 bg-gray-100 rounded-lg text-sm text-gray-700 font-medium border border-gray-200">
+                        {t}
+                      </span>
+                    ))}
+                    {(!demand.tools || demand.tools.length === 0) && <p className="text-gray-500 text-sm italic">Nenhuma ferramenta indicada.</p>}
+                  </div>
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-gray-800 mb-4 uppercase">Outras Informações</h3>
@@ -804,7 +921,7 @@ export default function DemandDetails() {
         </div>
       </div>
 
-      {/* Admin Edit Modal */}
+      {/* Edit Modal */}
       {user?.role === 'ADMIN' && (
         <Modal
           isOpen={isEditModalOpen}
@@ -833,9 +950,10 @@ export default function DemandDetails() {
                   <input
                     type="date"
                     required
-                    className="w-full pl-10 p-2 border border-gray-300 rounded-lg text-sm"
+                    readOnly={user?.role !== 'ADMIN'}
+                    className={`w-full pl-10 p-2 border border-gray-300 rounded-lg text-sm ${user?.role !== 'ADMIN' ? 'bg-gray-50' : ''}`}
                     value={editFormData.date}
-                    onChange={(e) => setEditFormData({...editFormData, date: e.target.value})}
+                    onChange={(e) => user?.role === 'ADMIN' && setEditFormData({...editFormData, date: e.target.value})}
                   />
                 </div>
               </div>
@@ -846,10 +964,11 @@ export default function DemandDetails() {
                   <input
                     type="text"
                     required
+                    readOnly={user?.role !== 'ADMIN'}
                     placeholder="Ex: Praça Matriz"
-                    className="w-full pl-10 p-2 border border-gray-300 rounded-lg text-sm"
+                    className={`w-full pl-10 p-2 border border-gray-300 rounded-lg text-sm ${user?.role !== 'ADMIN' ? 'bg-gray-50' : ''}`}
                     value={editFormData.location}
-                    onChange={(e) => setEditFormData({...editFormData, location: e.target.value})}
+                    onChange={(e) => user?.role === 'ADMIN' && setEditFormData({...editFormData, location: e.target.value})}
                   />
                 </div>
               </div>
@@ -859,118 +978,129 @@ export default function DemandDetails() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Descrição</label>
               <textarea
                 required
+                readOnly={user?.role !== 'ADMIN' && demand.status === 'PENDING'}
                 rows={2}
-                className="w-full p-2 border border-gray-300 rounded-lg text-sm"
+                className={`w-full p-2 border border-gray-300 rounded-lg text-sm ${(user?.role !== 'ADMIN' && demand.status === 'PENDING') ? 'bg-gray-50' : ''}`}
                 value={editFormData.description}
-                onChange={(e) => setEditFormData({...editFormData, description: e.target.value})}
+                onChange={(e) => (user?.role === 'ADMIN' || demand.status !== 'PENDING') && setEditFormData({...editFormData, description: e.target.value})}
               />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Eletricistas Responsáveis</label>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-3 border border-gray-300 rounded-lg max-h-40 overflow-y-auto">
-                  {electricians?.map((e: any) => (
-                    <label key={e.id} className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer border border-transparent hover:border-gray-100">
-                      <input
-                        type="checkbox"
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        checked={editFormData.electricianIds.includes(e.id)}
-                        onChange={(evt) => {
-                          const newIds = evt.target.checked
-                            ? [...editFormData.electricianIds, e.id]
-                            : editFormData.electricianIds.filter(id => id !== e.id);
-                          setEditFormData({...editFormData, electricianIds: newIds});
-                        }}
-                      />
-                      <span className="text-xs text-gray-700 truncate" title={e.name}>{e.name}</span>
-                    </label>
-                  ))}
+              {user?.role === 'ADMIN' ? (
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Eletricistas Responsáveis</label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-3 border border-gray-300 rounded-lg max-h-40 overflow-y-auto">
+                    {electricians?.map((e: any) => (
+                      <label key={e.id} className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer border border-transparent hover:border-gray-100">
+                        <input
+                          type="checkbox"
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          checked={editFormData.electricianIds.includes(e.id)}
+                          onChange={(evt) => {
+                            const newIds = evt.target.checked
+                              ? [...editFormData.electricianIds, e.id]
+                              : editFormData.electricianIds.filter(id => id !== e.id);
+                            setEditFormData({...editFormData, electricianIds: newIds});
+                          }}
+                        />
+                        <span className="text-xs text-gray-700 truncate" title={e.name}>{e.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {editFormData.electricianIds.length === 0 && (
+                    <p className="text-red-500 text-[10px] mt-1 font-medium">* Selecione pelo menos um eletricista.</p>
+                  )}
                 </div>
-                {editFormData.electricianIds.length === 0 && (
-                  <p className="text-red-500 text-[10px] mt-1 font-medium">* Selecione pelo menos um eletricista.</p>
-                )}
-              </div>
-              <div>
+              ) : (
+                <div className="md:col-span-2">
+                   <p className="text-xs text-gray-500 italic">Responsáveis: {demand.electricians?.map((e: any) => e.name).join(', ')}</p>
+                </div>
+              )}
+              <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Contato do Solicitante</label>
                 <input
                   type="text"
-                  className="w-full p-2 border border-gray-300 rounded-lg text-sm"
+                  readOnly={user?.role !== 'ADMIN'}
+                  className={`w-full p-2 border border-gray-300 rounded-lg text-sm ${user?.role !== 'ADMIN' ? 'bg-gray-50' : ''}`}
                   value={editFormData.clientNumber}
-                  onChange={(e) => setEditFormData({...editFormData, clientNumber: e.target.value})}
+                  onChange={(e) => user?.role === 'ADMIN' && setEditFormData({...editFormData, clientNumber: e.target.value})}
                 />
               </div>
             </div>
 
             <div className="border-t pt-4 space-y-6">
-              <div>
-                <h3 className="text-sm font-bold text-gray-800 mb-4 flex items-center">
-                  <Package className="h-4 w-4 mr-2" /> Materiais Planejados
-                </h3>
-                <div className="relative mb-4">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-                    <input
-                      type="text"
-                      className="w-full pl-10 p-2 border border-gray-300 rounded-lg text-sm"
-                      placeholder="Pesquisar material planejado..."
-                      value={materialSearch}
-                      onChange={(e) => {
-                        setMaterialSearch(e.target.value);
-                        setShowMaterialResults(true);
-                      }}
-                      onFocus={() => setShowMaterialResults(true)}
-                    />
-                  </div>
-                  {showMaterialResults && materialSearch && (
-                    <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-40 overflow-y-auto">
-                      {filteredMaterials?.map((m: any) => (
-                        <button
-                          key={m.id}
-                          type="button"
-                          className="w-full text-left p-2 hover:bg-gray-50 flex items-center justify-between border-b border-gray-50 last:border-0"
-                          onClick={() => {
-                            handleAddMaterial(m.id);
-                            setMaterialSearch('');
-                            setShowMaterialResults(false);
-                          }}
-                        >
-                          <span className="text-sm text-gray-700">{m.name}</span>
-                          <Plus className="h-4 w-4 text-gray-400" />
-                        </button>
-                      ))}
+              {(user?.role === 'ADMIN' || demand.status === 'PENDING') && (
+                <div>
+                  <h3 className="text-sm font-bold text-gray-800 mb-4 flex items-center">
+                    <Package className="h-4 w-4 mr-2" /> Materiais Planejados
+                  </h3>
+                  <div className="relative mb-4">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+                      <input
+                        type="text"
+                        className="w-full pl-10 p-2 border border-gray-300 rounded-lg text-sm"
+                        placeholder="Pesquisar material planejado..."
+                        value={materialSearch}
+                        onChange={(e) => {
+                          setMaterialSearch(e.target.value);
+                          setShowMaterialResults(true);
+                        }}
+                        onFocus={() => setShowMaterialResults(true)}
+                      />
                     </div>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  {editFormData.materials.map((m) => {
-                    const material = materials?.find((mat: any) => mat.id === m.materialId);
-                    return (
-                      <div key={m.materialId} className="flex items-center justify-between bg-gray-50 p-2 rounded-lg border border-gray-200">
-                        <span className="text-sm font-medium text-gray-700">{material?.name}</span>
-                        <div className="flex items-center gap-3">
-                          <input
-                            type="number"
-                            min="1"
-                            className="w-16 p-1 border border-gray-300 rounded text-center text-sm"
-                            value={m.quantity}
-                            onChange={(e) => updateMaterialQty(m.materialId, parseInt(e.target.value))}
-                          />
-                          <button type="button" onClick={() => removeMaterial(m.materialId)} className="text-red-500 hover:text-red-700">
-                            <Trash2 className="h-4 w-4" />
+                    {showMaterialResults && materialSearch && (
+                      <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-40 overflow-y-auto">
+                        {filteredMaterials?.map((m: any) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            className="w-full text-left p-2 hover:bg-gray-50 flex items-center justify-between border-b border-gray-50 last:border-0"
+                            onClick={() => {
+                              handleAddMaterial(m.id);
+                              setMaterialSearch('');
+                              setShowMaterialResults(false);
+                            }}
+                          >
+                            <span className="text-sm text-gray-700">{m.name}</span>
+                            <Plus className="h-4 w-4 text-gray-400" />
                           </button>
-                        </div>
+                        ))}
                       </div>
-                    );
-                  })}
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {editFormData.materials.map((m) => {
+                      const material = materials?.find((mat: any) => mat.id === m.materialId);
+                      return (
+                        <div key={m.materialId} className="flex items-center justify-between bg-gray-50 p-2 rounded-lg border border-gray-200">
+                          <span className="text-sm font-medium text-gray-700">{material?.name}</span>
+                          <div className="flex items-center gap-3">
+                            <input
+                              type="number"
+                              min="1"
+                              className="w-16 p-1 border border-gray-300 rounded text-center text-sm"
+                              value={m.quantity}
+                              onChange={(e) => updateMaterialQty(m.materialId, parseInt(e.target.value))}
+                            />
+                            <button type="button" onClick={() => removeMaterial(m.materialId)} className="text-red-500 hover:text-red-700">
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
 
-              {/* Execution Data (Visible for admins) */}
-              <div className="border-t pt-4 space-y-6">
-                <h3 className="text-sm font-bold text-gray-800 flex items-center uppercase">
-                  <CheckCircle className="h-4 w-4 mr-2" /> Dados da Execução
-                </h3>
+              {/* Execution Data */}
+              {(user?.role === 'ADMIN' || demand.status === 'PENDING_APPROVAL') && (
+                <div className="border-t pt-4 space-y-6">
+                  <h3 className="text-sm font-bold text-gray-800 flex items-center uppercase">
+                    <CheckCircle className="h-4 w-4 mr-2" /> Dados da Execução
+                  </h3>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -1022,20 +1152,35 @@ export default function DemandDetails() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Escada Utilizada</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Ferramentas</label>
                   <div className="flex flex-wrap gap-2">
-                    {registeredLadders?.map((l: any) => (
+                    {registeredTools?.map((t: any) => (
                       <button
-                        key={l.id}
+                        key={t.id}
                         type="button"
-                        onClick={() => setEditFormData({ ...editFormData, ladder: l.name })}
+                        onClick={() => {
+                          const isNone = t.name.toLowerCase() === 'nenhuma';
+                          let newTools;
+                          if (isNone) {
+                            newTools = editFormData.tools.includes(t.name) ? [] : [t.name];
+                          } else {
+                            const withoutNone = editFormData.tools.filter(name => name.toLowerCase() !== 'nenhuma');
+                            newTools = withoutNone.includes(t.name)
+                              ? withoutNone.filter(name => name !== t.name)
+                              : [...withoutNone, t.name];
+                          }
+                          setEditFormData({
+                            ...editFormData,
+                            tools: newTools
+                          });
+                        }}
                         className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                          editFormData.ladder === l.name
-                            ? 'bg-orange-600 border-orange-600 text-white'
-                            : 'bg-white border-gray-300 text-gray-600 hover:border-orange-400'
+                          editFormData.tools.includes(t.name)
+                            ? 'bg-blue-600 border-blue-600 text-white'
+                            : 'bg-white border-gray-300 text-gray-600 hover:border-blue-400'
                         }`}
                       >
-                        {l.name}
+                        {t.name}
                       </button>
                     ))}
                   </div>
@@ -1260,9 +1405,10 @@ export default function DemandDetails() {
                   </div>
                 </div>
               </div>
-            </div>
+            )}
+          </div>
 
-            <div className="flex gap-4 pt-4 sticky bottom-0 bg-white pb-2">
+          <div className="flex gap-4 pt-4 sticky bottom-0 bg-white pb-2">
               <button
                 type="button"
                 onClick={() => setIsEditModalOpen(false)}

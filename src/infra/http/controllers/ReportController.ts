@@ -523,7 +523,6 @@ export class ReportController {
 
             const resources = [];
             if (d.vehicles && d.vehicles.length > 0) resources.push(`Veículos: ${d.vehicles.join(', ')}`);
-            if (d.ladder) resources.push(`Escada: ${d.ladder}`);
             if (resources.length > 0) {
               doc.moveDown(0.4);
               doc.fillColor('#0284c7').font(fontBold).fontSize(8).text('RECURSOS UTILIZADOS:', 60);
@@ -773,7 +772,6 @@ export class ReportController {
 
         const resources = [];
         if (d.vehicles && d.vehicles.length > 0) resources.push(`Veículos: ${d.vehicles.join(', ')}`);
-        if (d.ladder) resources.push(`Escada: ${d.ladder}`);
         if (resources.length > 0) {
           children.push(new Paragraph({ children: [new TextRun({ text: "RECURSOS UTILIZADOS:", bold: true, size: 20 })], spacing: { before: 100 } }));
           resources.forEach(r => {

@@ -28,7 +28,7 @@ export class DemandController {
           usedMaterials: { include: { material: true } },
           returnedMaterials: { include: { material: true } },
         },
-        orderBy: { date: 'desc' },
+        orderBy: { createdAt: 'desc' },
       });
       res.json(demands);
     } catch (error) {
@@ -80,7 +80,7 @@ export class DemandController {
         transformerNumber,
         observation,
         vehicles,
-        ladder,
+        tools,
         usedMaterials,
         returnedMaterials
       } = req.body;
@@ -90,8 +90,8 @@ export class DemandController {
       const existingDemand = await prisma.demand.findUnique({ where: { id } });
       if (!existingDemand) return res.status(404).json({ error: 'Demand not found' });
 
-      if (existingDemand.status !== 'PENDING' && !isAdmin) {
-        return res.status(403).json({ error: 'Apenas administradores podem editar demandas em aprovação ou finalizadas.' });
+      if (!isAdmin && existingDemand.status === 'CONCLUDED') {
+        return res.status(403).json({ error: 'Apenas administradores podem editar demandas finalizadas.' });
       }
 
       // Use dynamic data object
@@ -102,7 +102,7 @@ export class DemandController {
         clientNumber,
       };
 
-      if (electricianIds) {
+      if (electricianIds && isAdmin) {
         updateData.electricians = {
           set: electricianIds.map((id: string) => ({ id }))
         };
@@ -110,24 +110,28 @@ export class DemandController {
 
       const isReturningToPending = existingDemand.status === 'PENDING_APPROVAL' && req.body.status === 'PENDING';
       
+      const canEditCompletionFields = isAdmin || (existingDemand.status === 'PENDING_APPROVAL' && req.user?.role === 'ELECTRICIAN');
+
       if (isReturningToPending) {
         updateData.status = 'PENDING';
         updateData.photoUrl = null;
         updateData.transformerNumber = null;
         updateData.observation = null;
         updateData.vehicles = [];
-        updateData.ladder = null;
+        updateData.tools = [];
       } else if (req.body.status) {
         updateData.status = req.body.status;
       }
 
-      if (isAdmin) {
+      if (canEditCompletionFields) {
         if (transformerNumber !== undefined) updateData.transformerNumber = transformerNumber;
         if (observation !== undefined) updateData.observation = observation;
         if (vehicles !== undefined) {
           updateData.vehicles = Array.isArray(vehicles) ? vehicles : (typeof vehicles === 'string' ? vehicles.split(',').map((v: string) => v.trim()).filter(Boolean) : []);
         }
-        if (ladder !== undefined) updateData.ladder = ladder;
+        if (tools !== undefined) {
+          updateData.tools = Array.isArray(tools) ? tools : (typeof tools === 'string' ? tools.split(',').map((v: string) => v.trim()).filter(Boolean) : []);
+        }
       }
 
       await prisma.$transaction(async (tx) => {
@@ -135,7 +139,7 @@ export class DemandController {
         let materialsChanged = false;
 
         // Handle Planned Materials
-        if (materials) {
+        if (materials && (isAdmin || existingDemand.status === 'PENDING')) {
           await tx.demandMaterial.deleteMany({ where: { demandId: id } });
           await tx.demandMaterial.createMany({
             data: materials.map((m: any) => ({
@@ -154,8 +158,8 @@ export class DemandController {
           materialsChanged = false; // No need to recalculate if cleared
         }
 
-        // Handle Service Completion Fields (Admin only)
-        if (isAdmin) {
+        // Handle Service Completion Fields
+        if (canEditCompletionFields) {
           if (usedMaterials) {
             await tx.usedMaterial.deleteMany({ where: { demandId: id } });
             
@@ -249,7 +253,7 @@ export class DemandController {
         usedMaterials, 
         replacedMaterials, 
         vehicles, 
-        ladder,
+        tools,
         transformerNumber, 
         observation 
       } = req.body;
@@ -277,39 +281,53 @@ export class DemandController {
 
       // Transactions to ensure atomicity
       await prisma.$transaction(async (tx) => {
+        // 0. Clear existing completion data (if any) to allow for re-finishing (edits)
+        await tx.usedMaterial.deleteMany({ where: { demandId: id } });
+        await tx.returnedMaterial.deleteMany({ where: { demandId: id } });
+
         // 1. Mark as PENDING_APPROVAL
+        const updateData: any = {
+          status: 'PENDING_APPROVAL',
+          transformerNumber,
+          observation,
+          vehicles: typeof vehicles === 'string' ? vehicles.split(',') : vehicles,
+          tools: typeof tools === 'string' ? tools.split(',') : tools,
+        };
+
+        // Only update photoUrl if a new file was uploaded
+        if (photoUrl) {
+          updateData.photoUrl = photoUrl;
+        }
+
         await tx.demand.update({
           where: { id },
-          data: {
-            status: 'PENDING_APPROVAL',
-            photoUrl,
-            transformerNumber,
-            observation,
-            vehicles: typeof vehicles === 'string' ? vehicles.split(',') : vehicles,
-            ladder,
-          }
+          data: updateData
         });
 
         // 2. Record used materials
         const usedItems = JSON.parse(usedMaterials || '[]');
-        await tx.usedMaterial.createMany({
-          data: usedItems.map((m: any) => ({
-            demandId: id,
-            materialId: m.materialId,
-            quantity: Number(m.quantity) || 0,
-          }))
-        });
+        if (usedItems.length > 0) {
+          await tx.usedMaterial.createMany({
+            data: usedItems.map((m: any) => ({
+              demandId: id,
+              materialId: m.materialId,
+              quantity: Number(m.quantity) || 0,
+            }))
+          });
+        }
 
         // 3. Record returned/defective materials
         const replacedItems = JSON.parse(replacedMaterials || '[]');
-        await tx.returnedMaterial.createMany({
-          data: replacedItems.map((m: any) => ({
-            demandId: id,
-            materialId: m.materialId,
-            quantity: Number(m.quantity) || 0,
-            type: 'DEFECTIVE'
-          }))
-        });
+        if (replacedItems.length > 0) {
+          await tx.returnedMaterial.createMany({
+            data: replacedItems.map((m: any) => ({
+              demandId: id,
+              materialId: m.materialId,
+              quantity: Number(m.quantity) || 0,
+              type: 'DEFECTIVE'
+            }))
+          });
+        }
 
         // 4. Calculate "Not Used" materials
         // Planned - Used = Not Used (if > 0)
