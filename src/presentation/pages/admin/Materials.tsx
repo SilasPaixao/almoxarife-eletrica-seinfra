@@ -293,7 +293,14 @@ export default function Materials() {
                     >
                       <option value="">Selecione um material...</option>
                       {materials
-                        ?.filter((m: any) => m.id !== editingMaterial?.id && !m.components)
+                        ?.filter((m: any) => {
+                          if (m.id === editingMaterial?.id) return false;
+                          const comps = m.components 
+                            ? (typeof m.components === 'string' ? JSON.parse(m.components) : m.components) 
+                            : null;
+                          const isComposition = Array.isArray(comps) && comps.length > 0;
+                          return !isComposition;
+                        })
                         ?.map((m: any) => (
                           <option key={m.id} value={m.id}>{m.name} ({m.unit || 'un'})</option>
                         ))
