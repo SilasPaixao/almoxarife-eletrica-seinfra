@@ -12,6 +12,9 @@ import Reports from './presentation/pages/admin/Reports.tsx';
 import Vehicles from './presentation/pages/admin/Vehicles.tsx';
 import Tools from './presentation/pages/admin/Tools.tsx';
 import RecoveredMaterials from './presentation/pages/admin/RecoveredMaterials.tsx';
+import Equipments from './presentation/pages/admin/Equipments.tsx';
+import PendingReturns from './presentation/pages/admin/PendingReturns.tsx';
+import MaterialSeparation from './presentation/pages/admin/MaterialSeparation.tsx';
 import ProtectedRoute from './presentation/components/ProtectedRoute.tsx';
 
 const queryClient = new QueryClient();
@@ -37,6 +40,9 @@ export default function App() {
               <Route path="/admin/vehicles" element={<Vehicles />} />
               <Route path="/admin/tools" element={<Tools />} />
               <Route path="/admin/recovered" element={<RecoveredMaterials />} />
+              <Route path="/admin/equipments" element={<Equipments />} />
+              <Route path="/admin/pending-returns" element={<PendingReturns />} />
+              <Route path="/admin/separation" element={<MaterialSeparation />} />
             </Route>
 
             <Route path="*" element={<Navigate to="/" replace />} />

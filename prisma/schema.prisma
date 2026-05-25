@@ -35,6 +35,7 @@ model User {
   createdDemands  Demand[] @relation("CreatedByAdmin")
   reports         Report[]
   auditLogs       AuditLog[]
+  equipmentDeliveries EquipmentDelivery[]
 
   @@map("users")
 }
@@ -43,6 +44,8 @@ model Material {
   id          String   @id @default(uuid())
   name        String
   imageUrl    String?
+  unit        String   @default("un")
+  components  Json?    // Optional JSON array: [{ materialId: String, quantity: Int }]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -126,6 +129,7 @@ model ReturnedMaterial {
   quantity     Int
   type       ReturnType
   date       DateTime   @default(now())
+  isReturned Boolean    @default(false)
 
   @@map("returned_materials")
 }
@@ -182,4 +186,32 @@ model Tool {
   updatedAt DateTime @updatedAt
 
   @@map("tools")
+}
+
+model Equipment {
+  id         String              @id @default(uuid())
+  name       String
+  code       String?             // Serial or product code
+  type       String              @default("EPI") // "EPI", "FERRAMENTA", "EQUIPAMENTO"
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+  deliveries EquipmentDelivery[]
+
+  @@map("equipments")
+}
+
+model EquipmentDelivery {
+  id            String    @id @default(uuid())
+  electricianId String
+  electrician   User      @relation(fields: [electricianId], references: [id], onDelete: Cascade)
+  equipmentId   String
+  equipment     Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  quantity      Int       @default(1)
+  deliveryDate  DateTime  @default(now())
+  type          String    @default("ENTREGA") // "ENTREGA" (entregue ao eletricista), "DEVOLUCAO" (devolvido pelo eletricista)
+  observation   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@map("equipment_deliveries")
 }

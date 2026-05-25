@@ -15,7 +15,10 @@ import {
   Ruler,
   Clock,
   RotateCw,
-  Wrench
+  Wrench,
+  Shield,
+  RotateCcw,
+  Layers
 } from 'lucide-react';
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -26,14 +29,20 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const menuItems = user?.role === 'ADMIN' ? [
     { name: 'Início', path: '/', icon: Home },
     { name: 'Demandas', path: '/admin/demands', icon: ClipboardList },
+    { name: 'Kits para Separação', path: '/admin/separation', icon: Layers },
     { name: 'Materiais', path: '/admin/materials', icon: Package },
+    { name: 'Sobras a Retornar', path: '/admin/pending-returns', icon: RotateCcw },
     { name: 'Materiais Recuperados', path: '/admin/recovered', icon: RotateCw },
     { name: 'Veículos', path: '/admin/vehicles', icon: Truck },
     { name: 'Ferramentas', path: '/admin/tools', icon: Wrench },
+    { name: 'EPIs & Equipamentos', path: '/admin/equipments', icon: Shield },
     { name: 'Usuários', path: '/admin/users', icon: Users },
     { name: 'Relatórios', path: '/admin/reports', icon: FileText },
   ] : [
     { name: 'Minhas Demandas', path: '/', icon: ClipboardList },
+    { name: 'Kits para Separação', path: '/admin/separation', icon: Layers },
+    { name: 'Sobras a Retornar', path: '/admin/pending-returns', icon: RotateCcw },
+    { name: 'EPIs & Equipamentos', path: '/admin/equipments', icon: Shield },
   ];
 
   const activeItem = menuItems.find(item => item.path === location.pathname);

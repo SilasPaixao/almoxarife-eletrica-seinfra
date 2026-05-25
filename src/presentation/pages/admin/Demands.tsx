@@ -6,8 +6,8 @@ import api from '../../services/api.ts';
 import { Plus, Search, FileDown, Upload, X, Loader2, Calendar, MapPin, User, ClipboardList, Trash2, Package, Pencil } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import * as XLSX from 'xlsx';
 import { CheckCircle, AlertCircle } from 'lucide-react';
+import { parseUTCDate, formatLocalDate } from '../../utils/date.ts';
 
 import ConfirmDialog from '../../components/ConfirmDialog.tsx';
 
@@ -31,7 +31,7 @@ export default function Demands() {
   });
   
   const [formData, setFormData] = useState({
-    date: format(new Date(), 'yyyy-MM-dd'),
+    date: formatLocalDate(new Date(), 'yyyy-MM-dd'),
     location: '',
     description: '',
     clientNumber: '',
@@ -95,7 +95,7 @@ export default function Demands() {
   const resetForm = () => {
     setEditingDemand(null);
     setFormData({
-      date: format(new Date(), 'yyyy-MM-dd'),
+      date: formatLocalDate(new Date(), 'yyyy-MM-dd'),
       location: '',
       description: '',
       clientNumber: '',
@@ -107,7 +107,7 @@ export default function Demands() {
   const handleEditDemand = (demand: any) => {
     setEditingDemand(demand);
     setFormData({
-      date: format(new Date(demand.date), 'yyyy-MM-dd'),
+      date: formatLocalDate(demand.date, 'yyyy-MM-dd'),
       location: demand.location,
       description: demand.description,
       clientNumber: demand.clientNumber || '',
@@ -148,61 +148,116 @@ export default function Demands() {
     queryFn: async () => (await api.get('/users')).data,
   });
 
-  const handleImportExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json(ws) as any[];
-        
-        const mappedDemands = data.map(item => {
-          const electricianName = item['Eletricista'] || item['eletricista'] || item['ELECTRICISTA'];
-          const electrician = users?.find((u: any) => 
-            u.name.toLowerCase() === electricianName?.toString().toLowerCase() ||
-            u.username.toLowerCase() === electricianName?.toString().toLowerCase()
-          );
+        const text = evt.target?.result as string;
+        let data = JSON.parse(text);
+        if (!Array.isArray(data)) {
+          data = [data];
+        }
 
-          return {
-            date: item['Data'] || item['data'] || format(new Date(), 'yyyy-MM-dd'),
-            location: item['Local'] || item['local'] || 'Não especificado',
-            description: item['Descrição'] || item['descricao'] || 'Sem descrição',
-            clientNumber: item['Número Cliente']?.toString() || item['numero_cliente']?.toString() || '',
-            electricianIds: electrician ? [electrician.id] : []
-          };
-        });
+        const mappedDemands: any[] = [];
+
+        for (let i = 0; i < data.length; i++) {
+          const item = data[i];
+          
+          // Must have: data, local, descrição (or descricao)
+          const dateVal = item['data'];
+          const locationVal = item['local'];
+          const descriptionVal = item['descrição'] || item['descricao'];
+
+          if (!dateVal || !locationVal || !descriptionVal) {
+            showFeedback('error', `Erro no item ${i + 1}: Chaves obrigatórias 'data', 'local' e 'descrição' precisam estar preenchidas.`);
+            return;
+          }
+
+          // Optional: eletricistas
+          const electriciansInput = item['eletricistas'];
+          const electricianIds: string[] = [];
+          if (electriciansInput) {
+            const namesToMatch = Array.isArray(electriciansInput) 
+              ? electriciansInput 
+              : typeof electriciansInput === 'string' 
+                ? [electriciansInput] 
+                : [];
+                
+            namesToMatch.forEach((nameStr: any) => {
+              if (!nameStr) return;
+              const foundUser = users?.find((u: any) => 
+                u.name.toLowerCase() === nameStr.toString().trim().toLowerCase() ||
+                u.username.toLowerCase() === nameStr.toString().trim().toLowerCase()
+              );
+              if (foundUser) {
+                electricianIds.push(foundUser.id);
+              }
+            });
+          }
+
+          // Optional: contato (maps to clientNumber)
+          const contactVal = item['contato']?.toString() || '';
+
+          // Optional: materiais planejados
+          const materialsInput = item['materiais planejados'] || item['materiais_planejados'] || item['materiaisPlanejados'];
+          const plannedMatus: any[] = [];
+          if (materialsInput && Array.isArray(materialsInput)) {
+            materialsInput.forEach((matItem: any) => {
+              const itemMatName = matItem['material'] || matItem['nome'] || matItem['name'];
+              const itemMatQty = matItem['quantidade'] || matItem['quantity'] || matItem['qtd'] || matItem['qty'] || 1;
+              if (itemMatName) {
+                const matchedMaterial = materials?.find((m: any) => 
+                  m.name.toLowerCase() === itemMatName.toString().trim().toLowerCase()
+                );
+                if (matchedMaterial) {
+                  plannedMatus.push({
+                    materialId: matchedMaterial.id,
+                    quantity: Number(itemMatQty) || 1
+                  });
+                }
+              }
+            });
+          }
+
+          mappedDemands.push({
+            date: dateVal,
+            location: locationVal,
+            description: descriptionVal,
+            clientNumber: contactVal,
+            electricianIds: electricianIds,
+            materials: plannedMatus
+          });
+        }
 
         if (mappedDemands.length === 0) {
-          showFeedback('error', 'Nenhuma demanda válida encontrada para importação. Verifique se os eletricistas estão cadastrados.');
+          showFeedback('error', 'Nenhuma demanda válida encontrada no arquivo JSON.');
           return;
         }
 
         setConfirmDialog({
           isOpen: true,
           title: 'Confirmar Importação',
-          message: `Deseja importar ${mappedDemands.length} demandas?`,
+          message: `Deseja importar ${mappedDemands.length} demandas do arquivo JSON?`,
           onConfirm: async () => {
             try {
               await api.post('/demands/bulk', { demands: mappedDemands });
               queryClient.invalidateQueries({ queryKey: ['demands'] });
-              showFeedback('success', 'Importação concluída com sucesso!');
+              showFeedback('success', 'Importação JSON concluída com sucesso!');
             } catch (error) {
               console.error('Import error:', error);
-              showFeedback('error', 'Erro ao importar Excel.');
+              showFeedback('error', 'Erro ao enviar dados da importação.');
             }
           }
         });
       } catch (error) {
         console.error('Import error:', error);
-        showFeedback('error', 'Erro ao importar Excel. Verifique o formato do arquivo.');
+        showFeedback('error', 'Erro ao ler ou processar arquivo JSON. Verifique a sintaxe.');
       }
     };
-    reader.readAsBinaryString(file);
+    reader.readAsText(file);
     e.target.value = '';
   };
 
@@ -215,7 +270,13 @@ export default function Demands() {
     }
   });
 
-  const filteredDemands = demands?.filter((d: any) => {
+  const currentYear = new Date().getFullYear();
+  const yearDemands = demands?.filter((d: any) => {
+    if (!d.date) return false;
+    return parseUTCDate(d.date).getFullYear() === currentYear;
+  });
+
+  const filteredDemands = yearDemands?.filter((d: any) => {
     const matchesSearch = 
       d.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
       d.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -244,8 +305,8 @@ export default function Demands() {
         <div className="flex gap-2 w-full md:w-auto">
           <label className="flex-1 md:flex-none bg-white border border-gray-300 rounded-lg px-4 py-2 flex items-center cursor-pointer hover:bg-gray-50 transition-colors">
             <Upload className="h-5 w-5 mr-2 text-gray-500" />
-            <span className="text-sm font-medium text-gray-700">Importar Excel</span>
-            <input type="file" className="hidden" accept=".xlsx, .xls" onChange={handleImportExcel} />
+            <span className="text-sm font-medium text-gray-700">Importar JSON</span>
+            <input type="file" className="hidden" accept=".json" onChange={handleImportJSON} />
           </label>
           <button
             onClick={() => setIsModalOpen(true)}
@@ -312,7 +373,7 @@ export default function Demands() {
               {filteredDemands?.map((demand: any) => (
                 <tr key={demand.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-6 py-4 text-sm text-gray-900">
-                    {format(new Date(demand.date), 'dd/MM/yyyy')}
+                    {formatLocalDate(demand.date, 'dd/MM/yyyy')}
                   </td>
                   <td className="px-6 py-4">
                     <div className="text-sm font-medium text-gray-900">{demand.location}</div>

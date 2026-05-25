@@ -10,13 +10,15 @@ export default function Materials() {
   const queryClient = useQueryClient();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState<any>(null);
-  const [formData, setFormData] = useState({ name: '' });
+  const [formData, setFormData] = useState({ name: '', unit: 'un' });
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState({
     isOpen: false,
     materialId: ''
   });
+  const [isGrouped, setIsGrouped] = useState(false);
+  const [compositeComponents, setCompositeComponents] = useState<Array<{ materialId: string, quantity: number }>>([]);
 
   const { data: materials, isLoading } = useQuery({
     queryKey: ['materials'],
@@ -48,12 +50,25 @@ export default function Materials() {
   const handleOpenModal = (material: any = null) => {
     if (material) {
       setEditingMaterial(material);
-      setFormData({ name: material.name });
+      setFormData({ name: material.name, unit: material.unit || 'un' });
       setPreview(material.imageUrl);
+      
+      const parsedComps = material.components 
+        ? (typeof material.components === 'string' ? JSON.parse(material.components) : material.components) 
+        : null;
+      if (Array.isArray(parsedComps) && parsedComps.length > 0) {
+        setIsGrouped(true);
+        setCompositeComponents(parsedComps);
+      } else {
+        setIsGrouped(false);
+        setCompositeComponents([]);
+      }
     } else {
       setEditingMaterial(null);
-      setFormData({ name: '' });
+      setFormData({ name: '', unit: 'un' });
       setPreview(null);
+      setIsGrouped(false);
+      setCompositeComponents([]);
     }
     setFile(null);
     setIsModalOpen(true);
@@ -62,9 +77,11 @@ export default function Materials() {
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setEditingMaterial(null);
-    setFormData({ name: '' });
+    setFormData({ name: '', unit: 'un' });
     setFile(null);
     setPreview(null);
+    setIsGrouped(false);
+    setCompositeComponents([]);
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -79,11 +96,20 @@ export default function Materials() {
     e.preventDefault();
     const data = new FormData();
     data.append('name', formData.name);
+    data.append('unit', formData.unit);
     if (file) {
       data.append('image', file);
     } else if (!preview && editingMaterial) {
       data.append('removeImage', 'true');
     }
+    
+    if (isGrouped && compositeComponents.length > 0) {
+      const validComponents = compositeComponents.filter(c => c.materialId !== '');
+      data.append('components', JSON.stringify(validComponents));
+    } else {
+      data.append('components', '[]');
+    }
+
     mutation.mutate(data);
   };
 
@@ -128,6 +154,16 @@ export default function Materials() {
               </div>
               <div className="p-4 text-center">
                 <p className="font-medium text-gray-900 truncate">{material.name}</p>
+                <div className="flex justify-center flex-wrap gap-1 mt-1">
+                  <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-gray-100 text-gray-500">
+                    {material.unit === 'm' ? 'Metros (m)' : 'Unidade (un)'}
+                  </span>
+                  {material.components && (typeof material.components === 'string' ? JSON.parse(material.components) : material.components)?.length > 0 && (
+                    <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-blue-50 text-blue-600 border border-blue-100">
+                      Grupo
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           ))}
@@ -193,8 +229,114 @@ export default function Materials() {
               required
               className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               value={formData.name}
-              onChange={(e) => setFormData({ name: e.target.value })}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Unidade de Medida</label>
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                type="button"
+                onClick={() => setFormData({ ...formData, unit: 'un' })}
+                className={`p-3 rounded-xl border-2 text-sm font-semibold transition-all ${
+                  formData.unit === 'un'
+                    ? 'border-blue-600 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 text-gray-600 hover:border-blue-200 bg-white'
+                }`}
+              >
+                Unidade (un)
+              </button>
+              <button
+                type="button"
+                onClick={() => setFormData({ ...formData, unit: 'm' })}
+                className={`p-3 rounded-xl border-2 text-sm font-semibold transition-all ${
+                  formData.unit === 'm'
+                    ? 'border-blue-600 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 text-gray-600 hover:border-blue-200 bg-white'
+                }`}
+              >
+                Metros (m)
+              </button>
+            </div>
+          </div>
+
+          <div className="border-t border-gray-100 pt-4">
+            <label className="flex items-center space-x-2 text-sm font-medium text-gray-700 mb-2 cursor-pointer">
+              <input
+                type="checkbox"
+                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                checked={isGrouped}
+                onChange={(e) => setIsGrouped(e.target.checked)}
+              />
+              <span>Este é um material agrupado (composição)</span>
+            </label>
+            <p className="text-xs text-gray-500 mb-4 ml-6">
+              Materiais agrupados não aparecem em detalhe no relatório; ao invés, são expandidos em seus componentes individuais.
+            </p>
+
+            {isGrouped && (
+              <div className="ml-6 space-y-3 bg-gray-50 p-4 rounded-xl border border-gray-100">
+                <span className="text-xs font-semibold text-gray-600 uppercase tracking-wider block">Materiais que compõem este grupo:</span>
+                
+                {compositeComponents.map((comp, idx) => (
+                  <div key={idx} className="flex gap-2 items-center">
+                    <select
+                      required
+                      value={comp.materialId}
+                      onChange={(e) => {
+                        const updated = [...compositeComponents];
+                        updated[idx].materialId = e.target.value;
+                        setCompositeComponents(updated);
+                      }}
+                      className="flex-1 p-2 bg-white border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 animate-fade-in"
+                    >
+                      <option value="">Selecione um material...</option>
+                      {materials
+                        ?.filter((m: any) => m.id !== editingMaterial?.id && !m.components)
+                        ?.map((m: any) => (
+                          <option key={m.id} value={m.id}>{m.name} ({m.unit || 'un'})</option>
+                        ))
+                      }
+                    </select>
+
+                    <input
+                      type="number"
+                      min="1"
+                      required
+                      value={comp.quantity}
+                      onChange={(e) => {
+                        const updated = [...compositeComponents];
+                        updated[idx].quantity = Math.max(1, parseInt(e.target.value) || 1);
+                        setCompositeComponents(updated);
+                      }}
+                      className="w-20 p-2 bg-white border border-gray-300 rounded-lg text-sm text-center focus:ring-2 focus:ring-blue-500"
+                      placeholder="Qtd"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCompositeComponents(compositeComponents.filter((_, i) => i !== idx));
+                      }}
+                      className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCompositeComponents([...compositeComponents, { materialId: '', quantity: 1 }]);
+                  }}
+                  className="mt-2 text-xs text-blue-600 font-semibold hover:text-blue-700 flex items-center gap-1 cursor-pointer"
+                >
+                  <Plus className="h-4 w-4" /> Adicionar Componente
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="flex gap-4 pt-4">

@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { formatLocalDate } from '../../utils/date.ts';
 
 type ReportRange = 'weekly' | 'monthly' | 'yearly';
 
@@ -203,12 +204,12 @@ export default function Reports() {
                     {h.type === 'WEEKLY' ? 'Semanal' : h.type === 'MONTHLY' ? 'Mensal' : 'Anual'}
                   </div>
                   <span className="text-[10px] text-gray-400 font-bold">
-                    Arquivado em: {format(new Date(h.createdAt), 'dd/MM/yy HH:mm')}
+                    Arquivado em: {formatLocalDate(h.createdAt, 'dd/MM/yy HH:mm')}
                   </span>
                 </div>
                 
                 <p className="text-sm font-extrabold text-gray-900 mb-2">
-                  Período: {format(new Date(h.startDate), 'dd/MM/yyyy')} — {format(new Date(h.endDate), 'dd/MM/yyyy')}
+                  Período: {formatLocalDate(h.startDate, 'dd/MM/yyyy')} — {formatLocalDate(h.endDate, 'dd/MM/yyyy')}
                 </p>
                 <div className="flex items-center gap-2 text-xs text-gray-500 mb-6">
                   <User className="h-3 w-3" />
@@ -413,7 +414,7 @@ export default function Reports() {
                         {demands.map((d: any) => (
                           <div key={d.id} className="p-4 rounded-xl border border-gray-100 hover:border-blue-200 bg-gray-50/30 transition-all space-y-3 group">
                             <div className="flex justify-between items-start">
-                              <p className="text-xs font-bold text-blue-600">{format(new Date(d.date), 'dd/MM/yyyy')}</p>
+                              <p className="text-xs font-bold text-blue-600">{formatLocalDate(d.date, 'dd/MM/yyyy')}</p>
                               <span className="text-[10px] bg-green-100 text-green-700 font-bold px-2 py-0.5 rounded uppercase">FEITO</span>
                             </div>
                             <p className="text-sm font-bold text-gray-900 line-clamp-2 min-h-[40px] group-hover:text-blue-700 transition-colors">{d.location}</p>
@@ -458,7 +459,7 @@ export default function Reports() {
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                         {report.recovered.map((m: any) => (
                           <div key={m.id} className="p-4 rounded-xl border border-green-100 bg-green-50/20">
-                            <p className="text-[10px] font-bold text-green-600 uppercase mb-1">{format(new Date(m.date), 'dd/MM/yyyy')}</p>
+                            <p className="text-[10px] font-bold text-green-600 uppercase mb-1">{formatLocalDate(m.date, 'dd/MM/yyyy')}</p>
                             <p className="text-sm font-bold text-gray-900">{m.material?.name || m.materialName}</p>
                             <p className="text-xl font-black text-green-700 mt-1">{m.quantity} <span className="text-xs font-normal">{m.material?.unit || 'un'}</span></p>
                           </div>

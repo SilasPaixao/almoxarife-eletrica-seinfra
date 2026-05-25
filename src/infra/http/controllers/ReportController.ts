@@ -8,6 +8,7 @@ import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
 import { AuthRequest } from '../middlewares/auth.middleware.ts';
+import { StorageService } from '../../storage/StorageService.ts';
 
 export class ReportController {
   static async getAvailablePeriods(req: AuthRequest, res: Response) {
@@ -137,7 +138,9 @@ export class ReportController {
         orderBy: { date: 'asc' }
       });
 
-      const grouped = demands.reduce((acc: any, demand: any) => {
+      const mappedDemands = await StorageService.expandDemands(demands.map(d => StorageService.mapDemand(d)));
+
+      const grouped = mappedDemands.reduce((acc: any, demand: any) => {
         if (demand.electricians && demand.electricians.length > 0) {
           demand.electricians.forEach((e: any) => {
             const name = e.name;
@@ -162,6 +165,11 @@ export class ReportController {
         include: { material: true }
       });
 
+      const mappedRecovered = standaloneRecovered.map(r => ({
+        ...r,
+        material: r.material ? StorageService.mapMaterial(r.material) : r.material
+      }));
+
       const savedReport = await prisma.report.findFirst({
         where: {
           type: (range as string).toUpperCase() as any,
@@ -179,7 +187,7 @@ export class ReportController {
         },
         data: grouped,
         demandsCount: demands.length,
-        recovered: standaloneRecovered,
+        recovered: mappedRecovered,
         isSaved: !!savedReport,
         savedId: savedReport?.id
       });
@@ -288,7 +296,7 @@ export class ReportController {
       }
 
       console.log(`[ReportController.downloadPdf] Fetching demands from ${weekStart.toISOString()} to ${weekEnd.toISOString()}...`);
-      const demands = await prisma.demand.findMany({
+      const rawDemands = await prisma.demand.findMany({
         where: {
           date: { gte: weekStart, lte: weekEnd },
           status: 'CONCLUDED'
@@ -301,6 +309,7 @@ export class ReportController {
         },
         orderBy: { date: 'asc' }
       });
+      const demands = await StorageService.expandDemands(rawDemands.map(d => StorageService.mapDemand(d)));
       console.log(`[ReportController.downloadPdf] Found ${demands.length} demands.`);
 
       const standaloneRecovered = await prisma.returnedMaterial.findMany({
@@ -413,6 +422,51 @@ export class ReportController {
           totals.recovered[key].quantity += m.quantity;
         });
 
+        const materialDemandIds: Record<string, Set<string>> = {};
+
+        // Pre-populate totals using unique demands to avoid double counting from multi-electrician demands
+        demands.forEach((d: any) => {
+          // Used materials
+          d.usedMaterials?.forEach((um: any) => {
+            const key = um.material.id;
+            if (!totals.used[key]) {
+              totals.used[key] = { name: um.material.name, unit: um.material.unit, quantity: 0, demandsCount: 0 };
+            }
+            totals.used[key].quantity += um.quantity;
+
+            if (!materialDemandIds[key]) {
+              materialDemandIds[key] = new Set<string>();
+            }
+            materialDemandIds[key].add(d.id);
+          });
+
+          // Defective/damaged materials
+          const damaged = d.returnedMaterials?.filter((m: any) => m.type === 'DEFECTIVE') || [];
+          damaged.forEach((m: any) => {
+            const key = `DAMAGED-${m.material.id}`;
+            if (!totals.returned[key]) {
+              totals.returned[key] = { name: m.material.name, unit: m.material.unit, quantity: 0, type: 'Danificado' };
+            }
+            totals.returned[key].quantity += m.quantity;
+          });
+
+          // Recovered materials
+          const recovered = d.returnedMaterials?.filter((m: any) => m.type === 'RECOVERED') || [];
+          recovered.forEach((m: any) => {
+            const name = m.material?.name || m.materialName;
+            const key = m.materialId || `MANUAL-${m.materialName}`;
+            if (!totals.recovered[key]) {
+              totals.recovered[key] = { name, unit: m.material?.unit || 'un', quantity: 0 };
+            }
+            totals.recovered[key].quantity += m.quantity;
+          });
+        });
+
+        // Set demandsCount for used items
+        Object.keys(totals.used).forEach((key) => {
+          totals.used[key].demandsCount = materialDemandIds[key] ? materialDemandIds[key].size : 0;
+        });
+
         doc.fillColor('#000000');
         const grouped = demands.reduce((acc: any, demand: any) => {
           demand.electricians.forEach((e: any) => {
@@ -486,11 +540,6 @@ export class ReportController {
               doc.text(`${um?.quantity || 0} ${material?.unit || ''}`, 430, lineY);
               doc.text(`${rm?.quantity || 0} ${material?.unit || ''}`, 480, lineY);
               
-              if (um) {
-                const key = um.material.id;
-                if (!totals.used[key]) totals.used[key] = { name: um.material.name, unit: um.material.unit, quantity: 0 };
-                totals.used[key].quantity += um.quantity;
-              }
               doc.moveDown(0.2);
             });
 
@@ -500,9 +549,7 @@ export class ReportController {
               doc.fillColor('#b91c1c').font(fontBold).fontSize(8).text('DANIFICADOS/DEFEITUOSOS:', 60);
               damaged.forEach((m: any) => {
                 doc.font(fontRegular).fontSize(8).text(`• ${m.quantity} ${m.material.unit || 'un'} - ${m.material.name}`, 70);
-                const key = `DAMAGED-${m.material.id}`;
-                if (!totals.returned[key]) totals.returned[key] = { name: m.material.name, unit: m.material.unit, quantity: 0, type: 'Danificado' };
-                totals.returned[key].quantity += m.quantity;
+
               });
             }
 
@@ -513,11 +560,7 @@ export class ReportController {
               recovered.forEach((m: any) => {
                 const name = m.material?.name || m.materialName;
                 doc.font(fontRegular).fontSize(8).text(`• ${m.quantity} ${m.material?.unit || 'un'} - ${name}`, 70);
-                const key = m.materialId || `MANUAL-${m.materialName}`;
-                if (!totals.recovered[key]) {
-                  totals.recovered[key] = { name, unit: m.material?.unit || 'un', quantity: 0 };
-                }
-                totals.recovered[key].quantity += m.quantity;
+
               });
             }
 
@@ -553,12 +596,46 @@ export class ReportController {
         doc.fillColor('#64748b').fontSize(8).text('TOTAL DE DEMANDAS', startX + 10, dashY + 30);
         doc.fillColor('#0f172a').fontSize(20).text(String(totals.totalDemands), startX + 10, dashY + 45);
 
-        const itemsUsed = Object.values(totals.used).reduce((sum: number, m: any) => sum + (m as any).quantity, 0);
+        let itemsUsed = 0;
+        demands.forEach((d: any) => {
+          d.usedMaterials?.forEach((um: any) => {
+            const unit = um.material?.unit?.toLowerCase();
+            const isMeters = unit === 'm' || unit === 'metros' || unit === 'metro' || unit === 'metro(s)';
+            if (isMeters) {
+              itemsUsed += 1;
+            } else {
+              itemsUsed += um.quantity;
+            }
+          });
+        });
+
         doc.rect(startX + boxWidth + spacing, dashY + 20, boxWidth, 60).fill('#f1f5f9');
         doc.fillColor('#64748b').fontSize(8).text('TOTAL ITENS UTILIZADOS', startX + boxWidth + spacing + 10, dashY + 30);
         doc.fillColor('#0284c7').fontSize(20).text(String(itemsUsed), startX + boxWidth + spacing + 10, dashY + 45);
 
-        const itemsRecovered = Object.values(totals.recovered).reduce((sum: number, m: any) => sum + (m as any).quantity, 0) as number;
+        let itemsRecovered = 0;
+        demands.forEach((d: any) => {
+          const recovered = d.returnedMaterials?.filter((m: any) => m.type === 'RECOVERED') || [];
+          recovered.forEach((m: any) => {
+            const unit = m.material?.unit?.toLowerCase();
+            const isMeters = unit === 'm' || unit === 'metros' || unit === 'metro' || unit === 'metro(s)';
+            if (isMeters) {
+              itemsRecovered += 1;
+            } else {
+              itemsRecovered += m.quantity;
+            }
+          });
+        });
+        standaloneRecovered.forEach((m: any) => {
+          const unit = m.material?.unit?.toLowerCase();
+          const isMeters = unit === 'm' || unit === 'metros' || unit === 'metro' || unit === 'metro(s)';
+          if (isMeters) {
+            itemsRecovered += 1;
+          } else {
+            itemsRecovered += m.quantity;
+          }
+        });
+
         doc.rect(startX + (boxWidth + spacing) * 2, dashY + 20, boxWidth, 60).fill('#f1f5f9');
         doc.fillColor('#64748b').fontSize(8).text('ITENS RECUPERADOS', startX + (boxWidth + spacing) * 2 + 10, dashY + 30);
         doc.fillColor('#15803d').fontSize(20).text(String(itemsRecovered), startX + (boxWidth + spacing) * 2 + 10, dashY + 45);
@@ -608,8 +685,14 @@ export class ReportController {
         const fullUsedSorted = Object.values(totals.used).sort((a: any, b: any) => a.name.localeCompare(b.name));
         fullUsedSorted.forEach((m: any) => {
           const lineY = doc.y;
-          doc.fillColor('#475569').font(fontRegular).fontSize(9).text(`• ${m.name}`, 60, lineY);
-          doc.fillColor('#0f172a').font(fontBold).fontSize(9).text(`${m.quantity} ${m.unit || 'un'}`, 480, lineY, { align: 'right', width: 80 });
+          const unit = m.unit?.toLowerCase();
+          const isMeters = unit === 'm' || unit === 'metros' || unit === 'metro' || unit === 'metro(s)';
+          const qtyText = isMeters && m.demandsCount > 0 
+            ? `${m.quantity} ${m.unit || 'un'} (em ${m.demandsCount} ${m.demandsCount === 1 ? 'demanda' : 'demandas'})`
+            : `${m.quantity} ${m.unit || 'un'}`;
+
+          doc.fillColor('#475569').font(fontRegular).fontSize(9).text(`• ${m.name}`, 60, lineY, { width: 330 });
+          doc.fillColor('#0f172a').font(fontBold).fontSize(9).text(qtyText, 400, lineY, { align: 'right', width: 160 });
           doc.moveDown(0.3);
           if (doc.y > 680) doc.addPage();
         });
@@ -662,7 +745,7 @@ export class ReportController {
 
       const reportTitle = range === 'yearly' ? 'RELATÓRIO ANUAL' : range === 'monthly' ? 'RELATÓRIO MENSAL' : 'RELATÓRIO SEMANAL';
 
-      const demands = await prisma.demand.findMany({
+      const rawDemands = await prisma.demand.findMany({
         where: {
           date: { gte: weekStart, lte: weekEnd },
           status: 'CONCLUDED'
@@ -675,6 +758,7 @@ export class ReportController {
         },
         orderBy: { date: 'asc' }
       });
+      const demands = await StorageService.expandDemands(rawDemands.map(d => StorageService.mapDemand(d)));
 
       const standaloneRecovered = await prisma.returnedMaterial.findMany({
         where: {

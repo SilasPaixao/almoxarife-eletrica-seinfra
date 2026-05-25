@@ -17,6 +17,7 @@ import ConfirmDialog from '../../components/ConfirmDialog.tsx';
 import Layout from '../../components/Layout.tsx';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { parseUTCDate, formatLocalDate } from '../../utils/date.ts';
 
 export default function RecoveredMaterials() {
   const queryClient = useQueryClient();
@@ -28,7 +29,7 @@ export default function RecoveredMaterials() {
     materialId: '',
     materialName: '',
     quantity: 1,
-    date: format(new Date(), 'yyyy-MM-dd')
+    date: formatLocalDate(new Date(), 'yyyy-MM-dd')
   });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [materialSearch, setMaterialSearch] = useState('');
@@ -77,7 +78,7 @@ export default function RecoveredMaterials() {
       materialId: '',
       materialName: '',
       quantity: 1,
-      date: format(new Date(), 'yyyy-MM-dd')
+      date: formatLocalDate(new Date(), 'yyyy-MM-dd')
     });
     setEditingId(null);
     setMaterialSearch('');
@@ -98,7 +99,7 @@ export default function RecoveredMaterials() {
       materialId: entry.materialId || '',
       materialName: entry.materialName || '',
       quantity: entry.quantity,
-      date: format(new Date(entry.date), 'yyyy-MM-dd')
+      date: formatLocalDate(entry.date, 'yyyy-MM-dd')
     });
     if (entry.material) {
       setMaterialSearch(entry.material.name);
@@ -168,7 +169,7 @@ export default function RecoveredMaterials() {
                 {filtered?.map((entry: any) => (
                   <tr key={entry.id} className="hover:bg-gray-50/50 transition-colors">
                     <td className="px-6 py-4 text-sm text-gray-600">
-                      {format(new Date(entry.date), 'dd/MM/yyyy')}
+                      {formatLocalDate(entry.date, 'dd/MM/yyyy')}
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center">

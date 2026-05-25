@@ -5,8 +5,8 @@ import { useState } from 'react';
 import api from '../services/api.ts';
 import { ClipboardList, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { parseUTCDate, formatLocalDate } from '../utils/date.ts';
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -21,13 +21,19 @@ export default function Dashboard() {
 
   const [activeTab, setActiveTab] = useState<'PENDING' | 'PENDING_APPROVAL' | 'CONCLUDED'>('PENDING');
 
+  const currentYear = new Date().getFullYear();
+  const yearDemands = demands?.filter((d: any) => {
+    if (!d.date) return false;
+    return parseUTCDate(d.date).getFullYear() === currentYear;
+  });
+
   const stats = [
-    { name: 'Pendentes', value: demands?.filter((d: any) => d.status === 'PENDING').length || 0, icon: Clock, color: 'text-yellow-600', bg: 'bg-yellow-100' },
-    { name: 'Em Aprovação', value: demands?.filter((d: any) => d.status === 'PENDING_APPROVAL').length || 0, icon: AlertTriangle, color: 'text-blue-600', bg: 'bg-blue-100' },
-    { name: 'Executadas', value: demands?.filter((d: any) => d.status === 'CONCLUDED').length || 0, icon: CheckCircle, color: 'text-green-600', bg: 'bg-green-100' },
+    { name: 'Pendentes', value: yearDemands?.filter((d: any) => d.status === 'PENDING').length || 0, icon: Clock, color: 'text-yellow-600', bg: 'bg-yellow-100' },
+    { name: 'Em Aprovação', value: yearDemands?.filter((d: any) => d.status === 'PENDING_APPROVAL').length || 0, icon: AlertTriangle, color: 'text-blue-600', bg: 'bg-blue-100' },
+    { name: 'Executadas', value: yearDemands?.filter((d: any) => d.status === 'CONCLUDED').length || 0, icon: CheckCircle, color: 'text-green-600', bg: 'bg-green-100' },
   ];
 
-  const filteredDemands = demands?.filter((d: any) => {
+  const filteredDemands = yearDemands?.filter((d: any) => {
     return d.status === activeTab;
   });
 
@@ -105,7 +111,7 @@ export default function Dashboard() {
                       <div className="flex items-center mt-2 text-xs text-gray-500 space-x-4">
                         <span className="flex items-center">
                           <ClipboardList className="h-3 w-3 mr-1" />
-                          {format(new Date(demand.date), "dd/MM/yyyy", { locale: ptBR })}
+                          {formatLocalDate(demand.date, "dd/MM/yyyy", { locale: ptBR })}
                         </span>
                         {user?.role === 'ADMIN' && (
                           <div className="flex gap-1">

@@ -24,7 +24,7 @@ import {
   Search,
   ClipboardList
 } from 'lucide-react';
-import { format } from 'date-fns';
+import { formatLocalDate } from '../utils/date.ts';
 import { ptBR } from 'date-fns/locale';
 import Modal from '../components/Modal.tsx';
 import ConfirmDialog from '../components/ConfirmDialog.tsx';
@@ -260,7 +260,9 @@ export default function DemandDetails() {
       setFeedback({ type: 'error', message: 'A foto do serviço é obrigatória!' });
       return;
     }
-    if (usedMaterials.length === 0) {
+    
+    const hasPlannedMaterials = demand?.plannedMaterials && demand.plannedMaterials.length > 0;
+    if (hasPlannedMaterials && usedMaterials.length === 0) {
       setFeedback({ type: 'error', message: 'É necessário informar os materiais utilizados!' });
       return;
     }
@@ -302,7 +304,7 @@ export default function DemandDetails() {
     }
 
     setEditFormData({
-      date: format(new Date(demand.date), 'yyyy-MM-dd'),
+      date: formatLocalDate(demand.date, 'yyyy-MM-dd'),
       location: demand.location,
       description: demand.description,
       clientNumber: demand.clientNumber || '',
@@ -422,7 +424,7 @@ export default function DemandDetails() {
                 <Calendar className="h-5 w-5 text-blue-500 mr-3 mt-0.5" />
                 <div>
                   <p className="text-xs text-gray-500 uppercase font-bold">Data</p>
-                  <p className="text-sm text-gray-900 font-medium">{format(new Date(demand.date), 'dd/MM/yyyy')}</p>
+                  <p className="text-sm text-gray-900 font-medium">{formatLocalDate(demand.date, 'dd/MM/yyyy')}</p>
                 </div>
               </div>
               <div className="flex items-start">
@@ -565,7 +567,9 @@ export default function DemandDetails() {
 
               {/* Used Materials */}
               <div className="relative">
-                <label className="block text-sm font-bold text-gray-700 mb-4">Materiais Utilizados (Obrigatório)</label>
+                <label className="block text-sm font-bold text-gray-700 mb-4">
+                  {demand?.plannedMaterials && demand.plannedMaterials.length > 0 ? 'Materiais Utilizados (Obrigatório)' : 'Materiais Utilizados (Opcional)'}
+                </label>
                 <div className="relative mb-4">
                   <Search className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
                   <input
@@ -620,13 +624,15 @@ export default function DemandDetails() {
                               ));
                             }}
                           />
-                          <button 
-                            type="button"
-                            onClick={() => setUsedMaterials(prev => prev.filter(item => item.materialId !== m.materialId))}
-                            className="text-red-500 hover:text-red-700"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          {!demand?.plannedMaterials?.some((pm: any) => pm.materialId === m.materialId) && (
+                            <button 
+                              type="button"
+                              onClick={() => setUsedMaterials(prev => prev.filter(item => item.materialId !== m.materialId))}
+                              className="text-red-500 hover:text-red-700"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
