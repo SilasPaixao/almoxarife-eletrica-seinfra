@@ -67,8 +67,11 @@ model Demand {
   date                 DateTime
   description          String
   location             String
+  googleMapsUrl        String?
   clientNumber         String?
   status               DemandStatus   @default(PENDING)
+  materialsDelivered   Boolean        @default(false)
+  excludeFromSeparation Boolean       @default(false)
   
   electricians         User[]         @relation("AssignedElectricians")
   

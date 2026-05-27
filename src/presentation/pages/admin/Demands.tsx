@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Layout from '../../components/Layout.tsx';
 import Modal from '../../components/Modal.tsx';
 import api from '../../services/api.ts';
-import { Plus, Search, FileDown, Upload, X, Loader2, Calendar, MapPin, User, ClipboardList, Trash2, Package, Pencil } from 'lucide-react';
+import { Plus, Search, FileDown, Upload, X, Loader2, Calendar, MapPin, User, ClipboardList, Trash2, Package, Pencil, ExternalLink, Camera } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { CheckCircle, AlertCircle } from 'lucide-react';
@@ -13,6 +14,7 @@ import ConfirmDialog from '../../components/ConfirmDialog.tsx';
 
 export default function Demands() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingDemand, setEditingDemand] = useState<any | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -33,11 +35,34 @@ export default function Demands() {
   const [formData, setFormData] = useState({
     date: formatLocalDate(new Date(), 'yyyy-MM-dd'),
     location: '',
+    googleMapsUrl: '',
     description: '',
     clientNumber: '',
     electricianIds: [] as string[],
     materials: [] as { materialId: string; quantity: number }[]
   });
+
+  const [selectedPhoto, setSelectedPhoto] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [photoCleared, setPhotoCleared] = useState(false);
+
+  const buildMultipartFormData = () => {
+    const data = new FormData();
+    data.append('date', formData.date);
+    data.append('location', formData.location);
+    data.append('googleMapsUrl', formData.googleMapsUrl || '');
+    data.append('description', formData.description);
+    data.append('clientNumber', formData.clientNumber || '');
+    data.append('electricianIds', JSON.stringify(formData.electricianIds));
+    data.append('materials', JSON.stringify(formData.materials));
+    
+    if (selectedPhoto) {
+      data.append('photo', selectedPhoto);
+    } else if (photoCleared) {
+      data.append('photoUrl', 'null');
+    }
+    return data;
+  };
 
   const [materialSearch, setMaterialSearch] = useState('');
   const [showMaterialResults, setShowMaterialResults] = useState(false);
@@ -52,9 +77,9 @@ export default function Demands() {
     queryFn: async () => (await api.get('/materials')).data,
   });
 
-  const filteredMaterials = materials?.filter((m: any) => 
-    m.name.toLowerCase().includes(materialSearch.toLowerCase())
-  );
+  const filteredMaterials = Array.isArray(materials)
+    ? materials.filter((m: any) => m.name.toLowerCase().includes(materialSearch.toLowerCase()))
+    : [];
 
   const { data: electricians } = useQuery({
     queryKey: ['users'],
@@ -94,9 +119,13 @@ export default function Demands() {
 
   const resetForm = () => {
     setEditingDemand(null);
+    setSelectedPhoto(null);
+    setPhotoPreview(null);
+    setPhotoCleared(false);
     setFormData({
       date: formatLocalDate(new Date(), 'yyyy-MM-dd'),
       location: '',
+      googleMapsUrl: '',
       description: '',
       clientNumber: '',
       electricianIds: [],
@@ -106,9 +135,13 @@ export default function Demands() {
 
   const handleEditDemand = (demand: any) => {
     setEditingDemand(demand);
+    setPhotoPreview(demand.photoUrl || null);
+    setSelectedPhoto(null);
+    setPhotoCleared(false);
     setFormData({
       date: formatLocalDate(demand.date, 'yyyy-MM-dd'),
       location: demand.location,
+      googleMapsUrl: demand.googleMapsUrl || '',
       description: demand.description,
       clientNumber: demand.clientNumber || '',
       electricianIds: demand.electricians?.map((e: any) => e.id) || [],
@@ -270,6 +303,17 @@ export default function Demands() {
     }
   });
 
+  const deliverDemandMutation = useMutation({
+    mutationFn: (id: string) => api.put(`/demands/${id}/deliver-materials`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['demands'] });
+      showFeedback('success', 'Materiais entregues ao eletricista! Demanda pronta para execução.');
+    },
+    onError: () => {
+      showFeedback('error', 'Erro ao registrar entrega dos materiais.');
+    }
+  });
+
   const currentYear = new Date().getFullYear();
   const yearDemands = demands?.filter((d: any) => {
     if (!d.date) return false;
@@ -371,12 +415,16 @@ export default function Demands() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filteredDemands?.map((demand: any) => (
-                <tr key={demand.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-6 py-4 text-sm text-gray-900">
+                <tr 
+                  key={demand.id} 
+                  className="hover:bg-gray-50 transition-colors cursor-pointer group"
+                  onClick={() => navigate(`/demands/${demand.id}`)}
+                >
+                  <td className="px-6 py-4 text-sm text-gray-900 font-medium group-hover:text-blue-600 transition-colors">
                     {formatLocalDate(demand.date, 'dd/MM/yyyy')}
                   </td>
                   <td className="px-6 py-4">
-                    <div className="text-sm font-medium text-gray-900">{demand.location}</div>
+                    <div className="text-sm font-medium text-gray-900 group-hover:text-blue-600 transition-colors">{demand.location}</div>
                     <div className="text-xs text-gray-500 truncate max-w-xs">{demand.description}</div>
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-600">
@@ -397,8 +445,25 @@ export default function Demands() {
                   <td className="px-6 py-4">
                     <StatusBadge status={demand.status} />
                   </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex justify-end gap-3">
+                  <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex justify-end gap-3 items-center">
+                      {demand.status === 'PENDING' && !demand.materialsDelivered && demand.plannedMaterials?.length > 0 && (
+                        <button 
+                          onClick={() => {
+                            setConfirmDialog({
+                              isOpen: true,
+                              title: 'Entregar Materiais',
+                              message: `Deseja registrar a entrega física de todos os materiais separados para esta demanda em "${demand.location}"?`,
+                              onConfirm: () => deliverDemandMutation.mutate(demand.id)
+                            });
+                          }}
+                          className="text-amber-600 hover:text-amber-800 flex items-center gap-1 text-xs font-bold"
+                          title="Entregar Materiais (Indicar que o kit foi retirado)"
+                        >
+                          <Package className="h-4 w-4 text-amber-500" />
+                          <span className="hidden md:inline">Entregar</span>
+                        </button>
+                      )}
                       <button 
                         onClick={() => handleEditDemand(demand)}
                         className="text-blue-600 hover:text-blue-800"
@@ -436,10 +501,11 @@ export default function Demands() {
         <form 
           onSubmit={(e) => { 
             e.preventDefault(); 
+            const data = buildMultipartFormData();
             if (editingDemand) {
-              updateMutation.mutate({ id: editingDemand.id, data: formData });
+              updateMutation.mutate({ id: editingDemand.id, data });
             } else {
-              createMutation.mutate(formData);
+              createMutation.mutate(data);
             }
           }} 
           className="p-6 space-y-6"
@@ -471,6 +537,20 @@ export default function Demands() {
                   onChange={(e) => setFormData({...formData, location: e.target.value})}
                 />
               </div>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Localização (Link do Google Maps / WhatsApp)</label>
+            <div className="relative">
+              <ExternalLink className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Cole o link de localização compartilhado (Ex: https://maps.google.com/?q=...)"
+                className="w-full pl-10 p-2 border border-gray-300 rounded-lg text-sm"
+                value={formData.googleMapsUrl}
+                onChange={(e) => setFormData({...formData, googleMapsUrl: e.target.value})}
+              />
             </div>
           </div>
 
@@ -519,6 +599,57 @@ export default function Demands() {
                 value={formData.clientNumber}
                 onChange={(e) => setFormData({...formData, clientNumber: e.target.value})}
               />
+            </div>
+          </div>
+
+          <div className="border-t pt-4">
+            <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center">
+              <Camera className="h-4 w-4 mr-2 text-blue-600" /> Foto de Referência (Opcional)
+            </h3>
+            
+            <div className="flex flex-col sm:flex-row items-center gap-4">
+              {photoPreview ? (
+                <div className="relative w-full sm:w-40 h-40 bg-gray-100 rounded-lg overflow-hidden border border-gray-200 shadow-sm shrink-0">
+                  <img src={photoPreview} alt="Preview" className="w-full h-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedPhoto(null);
+                      setPhotoPreview(null);
+                      setPhotoCleared(true);
+                    }}
+                    className="absolute top-1.5 right-1.5 p-1 bg-red-600 hover:bg-red-700 text-white rounded-full transition-colors shadow-sm"
+                    title="Remover foto"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ) : (
+                <label className="flex flex-col items-center justify-center w-full sm:w-40 h-40 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50 hover:border-blue-500 transition-colors shrink-0">
+                  <div className="flex flex-col items-center justify-center pt-5 pb-6 text-center px-4">
+                    <Camera className="h-8 w-8 text-gray-400 mb-2" />
+                    <p className="text-xs font-semibold text-gray-500">Adicionar Foto</p>
+                    <p className="text-[10px] text-gray-400 mt-1">PNG, JPG, GIF</p>
+                  </div>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        setSelectedPhoto(file);
+                        setPhotoPreview(URL.createObjectURL(file));
+                      }
+                    }}
+                  />
+                </label>
+              )}
+              
+              <div className="text-xs text-gray-500 flex-1">
+                <p className="font-semibold mb-1">Anexe uma foto ou imagem explicativa à demanda</p>
+                <p>Anexe imagens de postes, fiação, transformadores ou qualquer detalhe visual para auxiliar a equipe de campo.</p>
+              </div>
             </div>
           </div>
 

@@ -22,7 +22,8 @@ import {
   Plus,
   Trash2,
   Search,
-  ClipboardList
+  ClipboardList,
+  ExternalLink
 } from 'lucide-react';
 import { formatLocalDate } from '../utils/date.ts';
 import { ptBR } from 'date-fns/locale';
@@ -66,6 +67,7 @@ export default function DemandDetails() {
   const [editFormData, setEditFormData] = useState({
     date: '',
     location: '',
+    googleMapsUrl: '',
     description: '',
     clientNumber: '',
     electricianIds: [] as string[],
@@ -145,9 +147,9 @@ export default function DemandDetails() {
     }
   }, [demand]);
 
-  const filteredMaterials = materials?.filter((m: any) => 
-    m.name.toLowerCase().includes(materialSearch.toLowerCase())
-  );
+  const filteredMaterials = Array.isArray(materials)
+    ? materials.filter((m: any) => m.name.toLowerCase().includes(materialSearch.toLowerCase()))
+    : [];
 
   const updateMutation = useMutation({
     mutationFn: async (data: any) => await api.put(`/demands/${id}`, data),
@@ -306,6 +308,7 @@ export default function DemandDetails() {
     setEditFormData({
       date: formatLocalDate(demand.date, 'yyyy-MM-dd'),
       location: demand.location,
+      googleMapsUrl: demand.googleMapsUrl || '',
       description: demand.description,
       clientNumber: demand.clientNumber || '',
       electricianIds: demand.electricians?.map((e: any) => e.id) || [],
@@ -417,7 +420,30 @@ export default function DemandDetails() {
         {/* Detail Card */}
         <div className="lg:col-span-1 space-y-6">
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">{demand.location}</h2>
+            <h2 className="text-xl font-bold text-gray-900 mb-1">{demand.location}</h2>
+            
+            {demand.googleMapsUrl ? (
+              <div className="mb-4">
+                <p className="text-[10px] text-gray-400 uppercase font-black tracking-wider mb-1">Localização</p>
+                <a 
+                  href={demand.googleMapsUrl} 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="inline-flex items-center gap-2 p-2 px-3 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded-lg text-xs transition-colors shadow-sm w-full border border-blue-100 hover:border-blue-200"
+                >
+                  <MapPin className="h-4 w-4 text-blue-500 shrink-0" />
+                  <span className="flex-1 text-left truncate">Abrir no Google Maps</span>
+                  <ExternalLink className="h-3.5 w-3.5 text-blue-600 shrink-0" />
+                </a>
+              </div>
+            ) : (
+              <div className="mb-4">
+                <p className="text-[10px] text-gray-400 uppercase font-black tracking-wider mb-1">Localização</p>
+                <div className="text-xs text-gray-400 italic bg-gray-50 p-2 rounded-lg border border-gray-100">
+                  Nenhuma localização anexada
+                </div>
+              </div>
+            )}
             
             <div className="space-y-4">
               <div className="flex items-start">
@@ -501,6 +527,37 @@ export default function DemandDetails() {
                   </button>
                 )}
               </div>
+              
+              {demand.referencePhotoUrl && (
+                <div className="bg-blue-50/60 border border-blue-100 rounded-2xl p-4 flex gap-4 items-center">
+                  <a 
+                    href={demand.referencePhotoUrl} 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="w-20 h-20 rounded-xl bg-gray-100 overflow-hidden border border-gray-200 shrink-0 shadow-sm block hover:opacity-95 transition-opacity"
+                    title="Clique para abrir em tamanho real"
+                  >
+                    <img 
+                      src={demand.referencePhotoUrl} 
+                      referrerPolicy="no-referrer" 
+                      alt="Foto de referência" 
+                      className="w-full h-full object-cover" 
+                    />
+                  </a>
+                  <div className="text-xs text-blue-800">
+                    <p className="font-bold">Foto/Imagem de Referência (Admin)</p>
+                    <p className="text-blue-600/90 mt-1 leading-relaxed">Esta imagem explicativa foi anexada pelo administrador para auxiliar na execução deste serviço.</p>
+                    <a 
+                      href={demand.referencePhotoUrl} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="inline-block mt-1.5 font-bold text-blue-700 hover:underline"
+                    >
+                      Visualizar imagem de referência ↗
+                    </a>
+                  </div>
+                </div>
+              )}
               
               {/* Photo Upload */}
               <div>
@@ -921,6 +978,21 @@ export default function DemandDetails() {
                     <p className="text-sm"><span className="font-bold">Observação:</span> {demand.observation || 'Sem observações.'}</p>
                   </div>
                 </div>
+                {demand.referencePhotoUrl && (
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-800 mb-4 uppercase">Foto de Referência (Admin)</h3>
+                    <div className="relative w-full max-w-xs h-40 bg-gray-50 rounded-xl overflow-hidden border border-gray-200 shadow-sm">
+                      <a href={demand.referencePhotoUrl} target="_blank" rel="noreferrer" title="Ver imagem cheia">
+                        <img 
+                          src={demand.referencePhotoUrl} 
+                          alt="Foto de referência" 
+                          className="w-full h-full object-cover hover:opacity-90 transition-opacity" 
+                          referrerPolicy="no-referrer"
+                        />
+                      </a>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -977,6 +1049,21 @@ export default function DemandDetails() {
                     onChange={(e) => user?.role === 'ADMIN' && setEditFormData({...editFormData, location: e.target.value})}
                   />
                 </div>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Localização (Link do Google Maps / WhatsApp)</label>
+              <div className="relative">
+                <ExternalLink className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+                <input
+                  type="text"
+                  readOnly={user?.role !== 'ADMIN'}
+                  placeholder="Cole o link de localização compartilhado (Ex: https://maps.google.com/?q=...)"
+                  className={`w-full pl-10 p-2 border border-gray-300 rounded-lg text-sm ${user?.role !== 'ADMIN' ? 'bg-gray-50' : ''}`}
+                  value={editFormData.googleMapsUrl}
+                  onChange={(e) => user?.role === 'ADMIN' && setEditFormData({...editFormData, googleMapsUrl: e.target.value})}
+                />
               </div>
             </div>
 

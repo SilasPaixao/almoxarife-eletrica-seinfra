@@ -19,6 +19,9 @@ export default function Materials() {
   });
   const [isGrouped, setIsGrouped] = useState(false);
   const [compositeComponents, setCompositeComponents] = useState<Array<{ materialId: string, quantity: number }>>([]);
+  const [fastMaterialName, setFastMaterialName] = useState('');
+  const [fastMaterialUnit, setFastMaterialUnit] = useState('un');
+  const [showFastForm, setShowFastForm] = useState(false);
 
   const { data: materials, isLoading } = useQuery({
     queryKey: ['materials'],
@@ -45,6 +48,21 @@ export default function Materials() {
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => await api.delete(`/materials/${id}`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['materials'] }),
+  });
+
+  const createFastMaterialMutation = useMutation({
+    mutationFn: async (payload: { name: string, unit: string }) => {
+      const data = new FormData();
+      data.append('name', payload.name);
+      data.append('unit', payload.unit);
+      return (await api.post('/materials', data)).data;
+    },
+    onSuccess: (newMat) => {
+      queryClient.invalidateQueries({ queryKey: ['materials'] });
+      setCompositeComponents((old) => [...old, { materialId: newMat.id, quantity: 1 }]);
+      setFastMaterialName('');
+      setShowFastForm(false);
+    }
   });
 
   const handleOpenModal = (material: any = null) => {
@@ -82,6 +100,9 @@ export default function Materials() {
     setPreview(null);
     setIsGrouped(false);
     setCompositeComponents([]);
+    setFastMaterialName('');
+    setFastMaterialUnit('un');
+    setShowFastForm(false);
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -333,15 +354,61 @@ export default function Materials() {
                   </div>
                 ))}
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCompositeComponents([...compositeComponents, { materialId: '', quantity: 1 }]);
-                  }}
-                  className="mt-2 text-xs text-blue-600 font-semibold hover:text-blue-700 flex items-center gap-1 cursor-pointer"
-                >
-                  <Plus className="h-4 w-4" /> Adicionar Componente
-                </button>
+                <div className="flex items-center gap-4 mt-3 pt-3 border-t border-gray-100">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCompositeComponents([...compositeComponents, { materialId: '', quantity: 1 }]);
+                    }}
+                    className="text-xs text-blue-600 font-bold hover:text-blue-700 flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="h-4 w-4" /> Adicionar Componente Existente
+                  </button>
+                  
+                  <span className="text-gray-300 text-xs">|</span>
+                  
+                  <button
+                    type="button"
+                    onClick={() => setShowFastForm(!showFastForm)}
+                    className="text-xs text-indigo-600 font-bold hover:text-indigo-700 flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="h-4 w-4" /> Cadastrar Outro Material...
+                  </button>
+                </div>
+
+                {showFastForm && (
+                  <div className="mt-3 p-3 bg-indigo-50/50 border border-indigo-100 rounded-lg flex flex-col sm:flex-row gap-2 items-end animate-in fade-in slide-in-from-top-2 duration-200">
+                    <div className="flex-1">
+                      <label className="block text-[10px] uppercase tracking-wider font-bold text-indigo-600 mb-1">Nome do Material Físico</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: Curva 90 3/4"
+                        value={fastMaterialName}
+                        onChange={(e) => setFastMaterialName(e.target.value)}
+                        className="w-full p-1.5 bg-white border border-gray-200 rounded text-xs focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div className="w-24">
+                      <label className="block text-[10px] uppercase tracking-wider font-bold text-indigo-600 mb-1">Unidade</label>
+                      <select
+                        value={fastMaterialUnit}
+                        onChange={(e) => setFastMaterialUnit(e.target.value)}
+                        className="w-full p-1.5 bg-white border border-gray-200 rounded text-xs focus:ring-1 focus:ring-indigo-500"
+                      >
+                        <option value="un">un (Unid)</option>
+                        <option value="m">m (Metro)</option>
+                      </select>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!fastMaterialName.trim() || createFastMaterialMutation.isPending}
+                      onClick={() => createFastMaterialMutation.mutate({ name: fastMaterialName, unit: fastMaterialUnit })}
+                      className="p-1.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded disabled:opacity-50"
+                    >
+                      {createFastMaterialMutation.isPending ? 'Gravando...' : 'Cadastrar e Incluir'}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>

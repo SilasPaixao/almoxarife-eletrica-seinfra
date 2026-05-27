@@ -74,9 +74,21 @@ export class StorageService {
 
   static mapDemand(demand: any): any {
     if (!demand) return demand;
+
+    let description = demand.description || '';
+    let referencePhotoUrl = null;
+
+    if (description.includes('###REF_PHOTO:')) {
+      const parts = description.split('###REF_PHOTO:');
+      description = parts[0];
+      referencePhotoUrl = parts[1] || null;
+    }
+
     const mapped = {
       ...demand,
-      photoUrl: StorageService.getFileUrl(demand.photoUrl)
+      description,
+      photoUrl: StorageService.getFileUrl(demand.photoUrl),
+      referencePhotoUrl: StorageService.getFileUrl(referencePhotoUrl)
     };
     
     if (mapped.plannedMaterials) {

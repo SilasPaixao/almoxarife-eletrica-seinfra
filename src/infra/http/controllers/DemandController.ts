@@ -20,6 +20,62 @@ function parseDateAtNoon(dateInput: string | Date | undefined | null): Date {
   return new Date();
 }
 
+async function recalculateNotUsedReturns(demandId: string, tx: any) {
+  const demand = await tx.demand.findUnique({
+    where: { id: demandId },
+    include: {
+      plannedMaterials: true,
+      usedMaterials: true
+    }
+  });
+  if (!demand) return;
+
+  // Delete all current NOT_USED returns that are NOT yet visually cleared/returned (isReturned: false)
+  await tx.returnedMaterial.deleteMany({
+    where: {
+      demandId,
+      type: 'NOT_USED',
+      isReturned: false
+    }
+  });
+
+  // Check if NOT_USED returns are eligible to be created:
+  // Either the status is PENDING_APPROVAL/CONCLUDED, OR the materials have already been delivered (materialsDelivered is true)
+  const isEligible = demand.materialsDelivered || demand.status === 'CONCLUDED' || demand.status === 'PENDING_APPROVAL';
+  
+  if (isEligible) {
+    for (const planned of demand.plannedMaterials) {
+      const used = demand.usedMaterials.find((u: any) => u.materialId === planned.materialId);
+      const usedQty = used ? used.quantity : 0;
+      const notUsedQty = planned.quantity - usedQty;
+
+      if (notUsedQty > 0) {
+        // Check if this material has already been marked as returned (isReturned = true)
+        const alreadyReturned = await tx.returnedMaterial.findFirst({
+          where: {
+            demandId,
+            materialId: planned.materialId,
+            type: 'NOT_USED',
+            isReturned: true
+          }
+        });
+
+        if (!alreadyReturned) {
+          await tx.returnedMaterial.create({
+            data: {
+              demandId,
+              materialId: planned.materialId,
+              quantity: notUsedQty,
+              type: 'NOT_USED',
+              isReturned: false
+            }
+          });
+        }
+      }
+    }
+  }
+}
+
 export class DemandController {
   static async getAll(req: AuthRequest, res: Response) {
     try {
@@ -54,20 +110,63 @@ export class DemandController {
 
   static async create(req: AuthRequest, res: Response) {
     try {
-      const { date, description, location, clientNumber, electricianIds, materials } = req.body;
+      const { date, description, location, googleMapsUrl, clientNumber, electricianIds, materials } = req.body;
+
+      let parsedElectricianIds: string[] = [];
+      if (electricianIds) {
+        if (typeof electricianIds === 'string') {
+          try {
+            parsedElectricianIds = JSON.parse(electricianIds);
+          } catch {
+            parsedElectricianIds = electricianIds.split(',').map((id: string) => id.trim()).filter(Boolean);
+          }
+        } else if (Array.isArray(electricianIds)) {
+          parsedElectricianIds = electricianIds;
+        }
+      }
+
+      let parsedMaterials: any[] = [];
+      if (materials) {
+        if (typeof materials === 'string') {
+          try {
+            parsedMaterials = JSON.parse(materials);
+          } catch {
+            parsedMaterials = [];
+          }
+        } else if (Array.isArray(materials)) {
+          parsedMaterials = materials;
+        }
+      }
+
+      let referencePhotoUrl: string | null = null;
+      if (req.file) {
+        const fileKey = `demands/${Date.now()}-${req.file.originalname}`;
+        referencePhotoUrl = await StorageService.uploadFile(
+          'service-photos',
+          fileKey,
+          req.file.buffer,
+          req.file.mimetype
+        );
+      }
+
+      let dbDescription = description || '';
+      if (referencePhotoUrl) {
+        dbDescription = `${dbDescription}###REF_PHOTO:${referencePhotoUrl}`;
+      }
 
       const demand = await prisma.demand.create({
         data: {
           date: parseDateAtNoon(date),
-          description,
+          description: dbDescription,
           location,
+          googleMapsUrl,
           clientNumber,
           electricians: {
-            connect: (electricianIds || []).map((id: string) => ({ id }))
+            connect: (parsedElectricianIds || []).map((id: string) => ({ id }))
           },
           createdById: req.user!.id,
           plannedMaterials: {
-            create: materials.map((m: any) => ({
+            create: (parsedMaterials || []).map((m: any) => ({
               materialId: m.materialId,
               quantity: Number(m.quantity),
             })),
@@ -79,6 +178,7 @@ export class DemandController {
 
       res.status(201).json(StorageService.mapDemand(demand));
     } catch (error) {
+      console.error('[DemandController.create] Error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   }
@@ -90,6 +190,7 @@ export class DemandController {
         date, 
         description, 
         location, 
+        googleMapsUrl,
         clientNumber, 
         electricianIds, 
         materials,
@@ -110,17 +211,83 @@ export class DemandController {
         return res.status(403).json({ error: 'Apenas administradores podem editar demandas finalizadas.' });
       }
 
+      // Safe body parsers
+      let parsedElectricianIds = electricianIds;
+      if (typeof electricianIds === 'string') {
+        try {
+          parsedElectricianIds = JSON.parse(electricianIds);
+        } catch {
+          parsedElectricianIds = electricianIds.split(',').map((uid: string) => uid.trim()).filter(Boolean);
+        }
+      }
+
+      let parsedMaterials = materials;
+      if (typeof materials === 'string') {
+        try {
+          parsedMaterials = JSON.parse(materials);
+        } catch {
+          parsedMaterials = [];
+        }
+      }
+
+      let parsedUsedMaterials = usedMaterials;
+      if (typeof usedMaterials === 'string') {
+        try {
+          parsedUsedMaterials = JSON.parse(usedMaterials);
+        } catch {
+          parsedUsedMaterials = [];
+        }
+      }
+
+      let parsedReturnedMaterials = returnedMaterials;
+      if (typeof returnedMaterials === 'string') {
+        try {
+          parsedReturnedMaterials = JSON.parse(returnedMaterials);
+        } catch {
+          parsedReturnedMaterials = [];
+        }
+      }
+
+      let baseDescription = description !== undefined ? description : existingDemand.description || '';
+      if (baseDescription.includes('###REF_PHOTO:')) {
+        baseDescription = baseDescription.split('###REF_PHOTO:')[0] || '';
+      }
+
+      let currentRefPhoto: string | null = null;
+      if (existingDemand.description && existingDemand.description.includes('###REF_PHOTO:')) {
+        currentRefPhoto = existingDemand.description.split('###REF_PHOTO:')[1] || null;
+      }
+
+      let finalReferencePhotoUrl = currentRefPhoto;
+      if (req.file) {
+        const fileKey = `demands/${Date.now()}-${req.file.originalname}`;
+        finalReferencePhotoUrl = await StorageService.uploadFile(
+          'service-photos',
+          fileKey,
+          req.file.buffer,
+          req.file.mimetype
+        );
+      } else if (req.body.photoUrl === null || req.body.photoUrl === 'null' || req.body.referencePhotoUrl === null || req.body.referencePhotoUrl === 'null') {
+        finalReferencePhotoUrl = null;
+      }
+
+      let dbDescription = baseDescription;
+      if (finalReferencePhotoUrl) {
+        dbDescription = `${baseDescription}###REF_PHOTO:${finalReferencePhotoUrl}`;
+      }
+
       // Use dynamic data object
       const updateData: any = {
         date: date ? parseDateAtNoon(date) : undefined,
-        description,
+        description: dbDescription,
         location,
+        googleMapsUrl,
         clientNumber,
       };
 
-      if (electricianIds && isAdmin) {
+      if (parsedElectricianIds && isAdmin) {
         updateData.electricians = {
-          set: electricianIds.map((id: string) => ({ id }))
+          set: parsedElectricianIds.map((uid: string) => ({ id: uid }))
         };
       }
 
@@ -155,10 +322,10 @@ export class DemandController {
         let materialsChanged = false;
 
         // Handle Planned Materials
-        if (materials && (isAdmin || existingDemand.status === 'PENDING')) {
+        if (parsedMaterials && (isAdmin || existingDemand.status === 'PENDING')) {
           await tx.demandMaterial.deleteMany({ where: { demandId: id } });
           await tx.demandMaterial.createMany({
-            data: materials.map((m: any) => ({
+            data: parsedMaterials.map((m: any) => ({
               demandId: id,
               materialId: m.materialId,
               quantity: Number(m.quantity) || 0,
@@ -176,12 +343,12 @@ export class DemandController {
 
         // Handle Service Completion Fields
         if (canEditCompletionFields) {
-          if (usedMaterials) {
+          if (parsedUsedMaterials) {
             await tx.usedMaterial.deleteMany({ where: { demandId: id } });
             
             // Create used materials
             await tx.usedMaterial.createMany({
-              data: usedMaterials.map((m: any) => ({
+              data: parsedUsedMaterials.map((m: any) => ({
                 demandId: id,
                 materialId: m.materialId,
                 quantity: Number(m.quantity) || 0,
@@ -191,41 +358,10 @@ export class DemandController {
           }
 
           if (materialsChanged && !isReturningToPending) {
-            // Recalculate NOT_USED materials
-            const updatedDemand = await tx.demand.findUnique({
-              where: { id },
-              include: { 
-                plannedMaterials: true,
-                usedMaterials: true
-              }
-            });
-
-            // Only recalculate if we have used materials (meaning it's at least PENDING_APPROVAL or CONCLUDED)
-            if (updatedDemand && updatedDemand.usedMaterials.length > 0) {
-              await tx.returnedMaterial.deleteMany({ 
-                where: { demandId: id, type: 'NOT_USED' } 
-              });
-
-              for (const planned of updatedDemand.plannedMaterials) {
-                const used = updatedDemand.usedMaterials.find((u: any) => u.materialId === planned.materialId);
-                const usedQty = used ? used.quantity : 0;
-                const notUsedQty = planned.quantity - usedQty;
-
-                if (notUsedQty > 0) {
-                  await tx.returnedMaterial.create({
-                    data: {
-                      demandId: id,
-                      materialId: planned.materialId,
-                      quantity: notUsedQty,
-                      type: 'NOT_USED'
-                    }
-                  });
-                }
-              }
-            }
+            await recalculateNotUsedReturns(id, tx);
           }
 
-          if (returnedMaterials) {
+          if (parsedReturnedMaterials) {
             // Delete and recreate DEFECTIVE and RECOVERED ones
             await tx.returnedMaterial.deleteMany({ 
               where: { 
@@ -234,7 +370,7 @@ export class DemandController {
               } 
             });
             
-            const returnedToCreate = returnedMaterials.map((m: any) => ({
+            const returnedToCreate = parsedReturnedMaterials.map((m: any) => ({
               demandId: id,
               materialId: m.materialId,
               quantity: Number(m.quantity) || 0,
@@ -346,23 +482,7 @@ export class DemandController {
         }
 
         // 4. Calculate "Not Used" materials
-        // Planned - Used = Not Used (if > 0)
-        for (const planned of demand.plannedMaterials) {
-          const used = usedItems.find((u: any) => u.materialId === planned.materialId);
-          const usedQty = used ? used.quantity : 0;
-          const notUsedQty = planned.quantity - usedQty;
-
-          if (notUsedQty > 0) {
-            await tx.returnedMaterial.create({
-              data: {
-                demandId: id,
-                materialId: planned.materialId,
-                quantity: notUsedQty,
-                type: 'NOT_USED'
-              }
-            });
-          }
-        }
+        await recalculateNotUsedReturns(id, tx);
       });
 
       res.json({ message: 'Demand sent for approval' });
@@ -500,6 +620,66 @@ export class DemandController {
     }
   }
 
+  static async deliverMaterials(req: AuthRequest, res: Response) {
+    try {
+      const { id } = req.params;
+      
+      if (req.user?.role !== 'ADMIN') {
+        return res.status(403).json({ error: 'Apenas administradores podem registrar entrega de materiais.' });
+      }
+
+      await prisma.$transaction(async (tx) => {
+        // Mark as materials delivered
+        await tx.demand.update({
+          where: { id },
+          data: { materialsDelivered: true }
+        });
+
+        // Compute and create initial NOT_USED entries
+        await recalculateNotUsedReturns(id, tx);
+      });
+
+      await AuditService.log('UPDATE', 'DEMAND_MATERIALS_DELIVERED', req.user.id, id, { materialsDelivered: true });
+
+      res.json({ message: 'Materiais da demanda entregues com sucesso!' });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Erro ao registrar entrega dos materiais.' });
+    }
+  }
+
+  static async toggleExcludeSeparation(req: AuthRequest, res: Response) {
+    try {
+      const { id } = req.params;
+      
+      if (req.user?.role !== 'ADMIN') {
+        return res.status(403).json({ error: 'Apenas administradores podem gerenciar kits de separação.' });
+      }
+
+      const demand = await prisma.demand.findUnique({ where: { id } });
+      if (!demand) {
+        return res.status(404).json({ error: 'Demanda não encontrada.' });
+      }
+
+      const updated = await prisma.demand.update({
+        where: { id },
+        data: { excludeFromSeparation: !demand.excludeFromSeparation }
+      });
+
+      await AuditService.log('UPDATE', 'DEMAND_EXCLUDE_SEPARATION', req.user.id, id, { excludeFromSeparation: updated.excludeFromSeparation });
+
+      res.json({ 
+        message: updated.excludeFromSeparation 
+          ? 'Demanda excluída dos Kits de Separação com sucesso!' 
+          : 'Demanda incluída nos Kits de Separação com sucesso!', 
+        excludeFromSeparation: updated.excludeFromSeparation 
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Erro ao alterar a exclusão do kit de separação.' });
+    }
+  }
+
   static async getSeparationData(req: AuthRequest, res: Response) {
     try {
       const { electricianId } = req.query;
@@ -511,22 +691,10 @@ export class DemandController {
       }
 
       if (targetElectricianId) {
-        // Fetch detailed data for a specific electrician
-        const electrician = await prisma.user.findUnique({
-          where: { id: targetElectricianId },
-          select: { id: true, name: true, username: true }
-        });
-
-        if (!electrician) {
-          return res.status(404).json({ error: 'Eletricista não encontrado.' });
-        }
-
-        const demands = await prisma.demand.findMany({
+        // Fetch all pending demands to filter/consolidate in memory
+        const allPendingDemands = await prisma.demand.findMany({
           where: {
             status: 'PENDING',
-            electricians: {
-              some: { id: targetElectricianId }
-            }
           },
           include: {
             plannedMaterials: {
@@ -541,10 +709,51 @@ export class DemandController {
           orderBy: { date: 'asc' }
         });
 
+        const activePendingDemands = allPendingDemands.filter(d => !d.excludeFromSeparation);
+        const inactivePendingDemands = allPendingDemands.filter(d => d.excludeFromSeparation);
+
+        let demands: any[] = [];
+        let excludedDemands: any[] = [];
+        let electricians: any[] = [];
+
+        if (targetElectricianId === 'unassigned') {
+          demands = activePendingDemands.filter(d => !d.electricians || d.electricians.length === 0);
+          excludedDemands = inactivePendingDemands.filter(d => !d.electricians || d.electricians.length === 0);
+        } else if (targetElectricianId.includes('_')) {
+          const targetIds = targetElectricianId.split('_');
+          const targetSet = new Set(targetIds);
+          demands = activePendingDemands.filter(d => {
+            if (!d.electricians || d.electricians.length !== targetSet.size) return false;
+            return d.electricians.every(e => targetSet.has(e.id));
+          });
+          excludedDemands = inactivePendingDemands.filter(d => {
+            if (!d.electricians || d.electricians.length !== targetSet.size) return false;
+            return d.electricians.every(e => targetSet.has(e.id));
+          });
+
+          electricians = await prisma.user.findMany({
+            where: { id: { in: targetIds } },
+            select: { id: true, name: true, username: true }
+          });
+          electricians.sort((a, b) => a.name.localeCompare(b.name));
+        } else {
+          // If a single ID is requested (like an individual logged-in electrician)
+          demands = activePendingDemands.filter(d => d.electricians && d.electricians.some(e => e.id === targetElectricianId));
+          excludedDemands = inactivePendingDemands.filter(d => d.electricians && d.electricians.some(e => e.id === targetElectricianId));
+          const singleEleObj = await prisma.user.findUnique({
+            where: { id: targetElectricianId },
+            select: { id: true, name: true, username: true }
+          });
+          if (singleEleObj) {
+            electricians = [singleEleObj];
+          }
+        }
+
         // Compute material totals
         const materialTotals: { [key: string]: { id: string; name: string; unit: string; quantity: number } } = {};
         demands.forEach(d => {
-          d.plannedMaterials.forEach(pm => {
+          const mats = d.plannedMaterials || [];
+          mats.forEach(pm => {
             if (!pm.material) return;
             const matId = pm.material.id;
             if (!materialTotals[matId]) {
@@ -559,43 +768,79 @@ export class DemandController {
           });
         });
 
+        const returnedElectrician = {
+          id: targetElectricianId,
+          name: electricians.map(e => e.name).join(' & ') || 'Sem Eletricista',
+          username: electricians.map(e => e.username).join(', ') || 'sem_eletricista'
+        };
+
         return res.json({
-          electrician,
+          electrician: returnedElectrician,
           demands: demands.map(d => StorageService.mapDemand(d)),
+          excludedDemands: excludedDemands.map(d => StorageService.mapDemand(d)),
           totals: Object.values(materialTotals)
         });
       }
 
-      // If no electricianId is specified and user is Admin, list ALL electricians who have PENDING demands
+      // If no electricianId is specified and user is Admin, list ALL unique teams/duos who have PENDING demands
       if (req.user?.role === 'ADMIN') {
-        const electriciansWithDemands = await prisma.user.findMany({
-          where: {
-            role: 'ELECTRICIAN',
-            status: 'APPROVED',
-            assignedDemands: {
-              some: { status: 'PENDING' }
-            }
+        const pendingDemands = await prisma.demand.findMany({
+          where: { 
+            status: 'PENDING',
           },
           select: {
             id: true,
-            name: true,
-            username: true,
-            assignedDemands: {
-              where: { status: 'PENDING' },
-              select: { id: true }
+            excludeFromSeparation: true,
+            electricians: {
+              select: { id: true, name: true, username: true }
             }
-          },
-          orderBy: { name: 'asc' }
+          }
         });
 
-        const mapped = electriciansWithDemands.map(e => ({
-          id: e.id,
-          name: e.name,
-          username: e.username,
-          pendingDemandsCount: e.assignedDemands.length
-        }));
+        const uniqueTeams: {
+          [key: string]: {
+            id: string;
+            name: string;
+            username: string;
+            pendingDemandsCount: number;
+            excludedDemandsCount: number;
+          }
+        } = {};
 
-        return res.json({ electricians: mapped });
+        pendingDemands.forEach(d => {
+          const sortedEles = [...(d.electricians || [])].sort((a, b) => a.name.localeCompare(b.name));
+          let teamId = '';
+          let teamName = '';
+          let teamUsername = '';
+
+          if (sortedEles.length > 0) {
+            teamId = sortedEles.map(e => e.id).join('_');
+            teamName = sortedEles.map(e => e.name).join(' & ');
+            teamUsername = sortedEles.map(e => e.username).join(', ');
+          } else {
+            teamId = 'unassigned';
+            teamName = 'Sem Eletricista';
+            teamUsername = 'sem_eletricista';
+          }
+
+          if (!uniqueTeams[teamId]) {
+            uniqueTeams[teamId] = {
+              id: teamId,
+              name: teamName,
+              username: teamUsername,
+              pendingDemandsCount: 0,
+              excludedDemandsCount: 0
+            };
+          }
+          if (d.excludeFromSeparation) {
+            uniqueTeams[teamId].excludedDemandsCount += 1;
+          } else {
+            uniqueTeams[teamId].pendingDemandsCount += 1;
+          }
+        });
+
+        const mappedTeams = Object.values(uniqueTeams).sort((a, b) => a.name.localeCompare(b.name));
+        return res.json({ electricians: mappedTeams });
       }
 
       return res.status(400).json({ error: 'Parâmetros inválidos.' });
@@ -610,39 +855,69 @@ export class DemandController {
       const { electricianId } = req.params;
       let targetId = electricianId;
 
-      if (req.user?.role === 'ELECTRICIAN' && req.user.id !== electricianId) {
+      // An electrician is allowed to download if they are part of the duo/team
+      if (req.user?.role === 'ELECTRICIAN' && !targetId.split('_').includes(req.user.id)) {
         return res.status(403).json({ error: 'Você não tem permissão para visualizar o kit de outro eletricista.' });
       }
 
-      const electrician = await prisma.user.findUnique({
-        where: { id: targetId },
-        select: { id: true, name: true, username: true }
-      });
-
-      if (!electrician) {
-        return res.status(404).json({ error: 'Eletricista não encontrado.' });
-      }
-
-      const demands = await prisma.demand.findMany({
+      const allPendingDemands = await prisma.demand.findMany({
         where: {
           status: 'PENDING',
-          electricians: {
-            some: { id: targetId }
-          }
+          excludeFromSeparation: false,
         },
         include: {
           plannedMaterials: {
             include: {
               material: true
             }
+          },
+          electricians: {
+            select: { id: true, name: true, username: true }
           }
         },
         orderBy: { date: 'asc' }
       });
 
-      if (demands.length === 0) {
-        return res.status(400).json({ error: 'Este eletricista não possui nenhuma demanda pendente para separação.' });
+      let demands: any[] = [];
+      let electricians: any[] = [];
+
+      if (targetId === 'unassigned') {
+        demands = allPendingDemands.filter(d => !d.electricians || d.electricians.length === 0);
+      } else if (targetId.includes('_')) {
+        const targetIds = targetId.split('_');
+        const targetSet = new Set(targetIds);
+        demands = allPendingDemands.filter(d => {
+          if (!d.electricians || d.electricians.length !== targetSet.size) return false;
+          return d.electricians.every(e => targetSet.has(e.id));
+        });
+
+        electricians = await prisma.user.findMany({
+          where: { id: { in: targetIds } },
+          select: { id: true, name: true, username: true }
+        });
+        electricians.sort((a, b) => a.name.localeCompare(b.name));
+      } else {
+        demands = allPendingDemands.filter(d => d.electricians && d.electricians.some(e => e.id === targetId));
+        const singleEleObj = await prisma.user.findUnique({
+          where: { id: targetId },
+          select: { id: true, name: true, username: true }
+        });
+        if (singleEleObj) {
+          electricians = [singleEleObj];
+        }
       }
+
+      if (demands.length === 0) {
+        return res.status(400).json({ error: 'Esta equipe/dupla não possui nenhuma demanda pendente para separação.' });
+      }
+
+      const teamName = electricians.map(e => e.name).join(' & ') || 'Sem Eletricista';
+      const teamUsername = electricians.map(e => e.username).join(', ') || 'sem_eletricista';
+
+      const electrician = {
+        name: teamName,
+        username: teamUsername
+      };
 
       const doc = new PDFDocument({ margin: 40, size: 'A4' });
       const chunks: Buffer[] = [];
@@ -739,6 +1014,7 @@ export class DemandController {
         
         doc.y = demandY + 27;
         doc.fillColor('#334155').font(fontItalic).fontSize(8.5).text(`Descrição da Demanda: ${d.description || 'Sem descrição'}`, 50);
+        doc.fillColor('#334155').font(fontRegular).fontSize(8.5).text(`Contato do Solicitante: ${d.clientNumber || 'Não informado'}`, 50);
         doc.moveDown(0.4);
 
         const mats = d.plannedMaterials || [];

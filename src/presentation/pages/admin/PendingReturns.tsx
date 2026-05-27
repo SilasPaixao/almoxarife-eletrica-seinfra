@@ -29,14 +29,25 @@ export default function PendingReturns() {
     returnId: '',
     materialName: '',
     quantity: 0,
-    unit: ''
+    unit: '',
+    type: 'clear' as 'clear' | 'deliver',
+    demandId: '',
+    location: ''
   });
 
   // Fetch pending return materials
-  const { data: pendingReturns, isLoading } = useQuery({
+  const { data: pendingReturns, isLoading: isLoadingReturns } = useQuery({
     queryKey: ['pending-returns'],
     queryFn: () => api.get('/demands/pending-returns').then(res => res.data)
   });
+
+  // Fetch demands to retrieve PENDING undelivered materials
+  const { data: demands, isLoading: isLoadingDemands } = useQuery({
+    queryKey: ['demands'],
+    queryFn: () => api.get('/demands').then(res => res.data)
+  });
+
+  const isLoading = isLoadingReturns || isLoadingDemands;
 
   const clearMutation = useMutation({
     mutationFn: (id: string) => api.put(`/demands/pending-returns/${id}/clear`),
@@ -49,19 +60,67 @@ export default function PendingReturns() {
     }
   });
 
+  const deliverMutation = useMutation({
+    mutationFn: (demandId: string) => api.put(`/demands/${demandId}/deliver-materials`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pending-returns'] });
+      queryClient.invalidateQueries({ queryKey: ['demands'] });
+      showFeedback('success', 'Materiais entregues com sucesso ao eletricista!');
+    },
+    onError: () => {
+      showFeedback('error', 'Erro ao entregar materiais.');
+    }
+  });
+
   const showFeedback = (type: 'success' | 'error', message: string) => {
     setFeedback({ type, message });
     setTimeout(() => setFeedback(null), 3000);
   };
 
-  const handleConfirmClear = () => {
-    if (confirmDialog.returnId) {
-      clearMutation.mutate(confirmDialog.returnId);
+  const handleConfirmAction = () => {
+    if (confirmDialog.type === 'deliver') {
+      if (confirmDialog.demandId) {
+        deliverMutation.mutate(confirmDialog.demandId);
+      }
+    } else {
+      if (confirmDialog.returnId) {
+        clearMutation.mutate(confirmDialog.returnId);
+      }
     }
+    setConfirmDialog({ ...confirmDialog, isOpen: false });
   };
 
+  // Compute virtual rows: planned materials for demands currently PENDING where materials are NOT yet delivered
+  const pendingDeliveries = React.useMemo(() => {
+    if (!demands) return [];
+    const items: any[] = [];
+    demands.forEach((d: any) => {
+      if (d.status === 'PENDING' && !d.materialsDelivered && d.plannedMaterials?.length > 0) {
+        d.plannedMaterials.forEach((pm: any) => {
+          items.push({
+            id: `delivery-${d.id}-${pm.materialId}`,
+            isVirtual: true,
+            demandId: d.id,
+            materialId: pm.materialId,
+            material: pm.material,
+            quantity: pm.quantity,
+            date: d.date,
+            demand: d
+          });
+        });
+      }
+    });
+    return items;
+  }, [demands]);
+
+  // Combine virtual items (waiting delivery) and real leftover returns
+  const allItems = React.useMemo(() => {
+    const realMapped = pendingReturns ? pendingReturns.map((r: any) => ({ ...r, isVirtual: false })) : [];
+    return [...pendingDeliveries, ...realMapped].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [pendingDeliveries, pendingReturns]);
+
   // Filter based on search term
-  const filteredReturns = pendingReturns?.filter((item: any) => {
+  const filteredReturns = allItems.filter((item: any) => {
     const term = searchTerm.toLowerCase();
     
     const matchesMaterialName = item.material?.name?.toLowerCase().includes(term);
@@ -90,10 +149,10 @@ export default function PendingReturns() {
         <div>
           <h1 className="text-2xl font-black text-gray-900 flex items-center gap-2">
             <RotateCcw className="h-7 w-7 text-blue-600" />
-            Sobras de Materiais a Retornar
+            Sobras de Materiais a Retornar / Separação
           </h1>
           <p className="text-gray-500 text-sm mt-1">
-            Materiais planejados que não foram utilizados na execução do serviço e precisam ser devolvidos ao almoxarifado.
+            Controle de kits de materiais a entregar e sobras de materiais planejados que precisam retornar ao estoque.
           </p>
         </div>
       </div>
@@ -102,15 +161,15 @@ export default function PendingReturns() {
       <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-4 mb-6 text-sm text-blue-800 flex items-start gap-3">
         <Package className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
         <div>
-          <p className="font-semibold">Como funciona o retorno das sobras?</p>
+          <p className="font-semibold">Como funciona a entrega e o retorno das sobras?</p>
           <p className="text-gray-600 text-xs mt-0.5">
-            Ao realizar a baixa de uma demanda, o sistema calcula automaticamente a diferença entre os materiais planejados e os materiais efetivamente utilizados. A diferença positiva é listada nesta área como pendência de devolução física para controle de estoque.
+            Ao marcar uma demanda pendente como <b>"Entregar Materiais"</b>, todos os seus materiais planejados passam a constar como pendências para retorno (sobras). Conforme o eletricista edita ou executa o serviço utilizando-os, o sistema desconta as quantidades automaticamente, listando apenas o saldo físico que de fato precisa retornar ao estoque.
           </p>
         </div>
       </div>
 
       {/* Search and Filters */}
-      <div className="bg-white p-4 rounded-xl border border-gray-200 mb-6">
+      <div className="bg-white p-4 rounded-xl border border-gray-200 mb-6 font-sans">
         <div className="relative">
           <Search className="absolute left-3 top-3.5 h-4 w-4 text-gray-400" />
           <input
@@ -128,45 +187,60 @@ export default function PendingReturns() {
       </div>
 
       {/* Main Table / List Container */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden min-h-[250px]">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden min-h-[250px] font-sans">
         {isLoading ? (
-          <div className="p-12 text-center text-gray-500">Carregando pendências de retorno...</div>
-        ) : filteredReturns?.length === 0 ? (
+          <div className="p-12 text-center text-gray-500">Carregando pendências...</div>
+        ) : filteredReturns.length === 0 ? (
           <div className="p-12 text-center">
             <RotateCcw className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-            <p className="text-gray-500 font-medium">Nenhum retorno pendente encontrado.</p>
-            <p className="text-gray-400 text-xs mt-1">Todas as sobras de materiais estão em dia ou nenhuma baixa recente gerou sobras.</p>
+            <p className="text-gray-500 font-medium">Nenhum retorno/entrega pendente encontrado.</p>
+            <p className="text-gray-400 text-xs mt-1">Todas as entregas de kits e sobras de materiais estão em dia.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3.5 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Material a Retornar</th>
+                  <th className="px-6 py-3.5 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Material / Status</th>
                   <th className="px-6 py-3.5 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">Quantidade</th>
                   {user?.role === 'ADMIN' && (
                     <th className="px-6 py-3.5 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Eletricista(s)</th>
                   )}
                   <th className="px-6 py-3.5 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Referência da Demanda</th>
-                  <th className="px-6 py-3.5 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Data da Baixa</th>
+                  <th className="px-6 py-3.5 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Data</th>
                   <th className="px-6 py-3.5 text-right text-xs font-bold text-gray-500 uppercase tracking-wider">Ações</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-150">
-                {filteredReturns?.map((item: any) => (
+                {filteredReturns.map((item: any) => (
                   <tr key={item.id} className="hover:bg-gray-50/50 transition-colors">
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                       <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-orange-50 text-orange-600">
+                        <div className={`p-2 rounded-lg ${
+                          item.isVirtual 
+                            ? 'bg-amber-50 text-amber-600 border border-amber-100' 
+                            : 'bg-orange-50 text-orange-600 border border-orange-100'
+                        }`}>
                           <Package className="h-4 w-4" />
                         </div>
                         <div>
-                          <span className="font-bold text-gray-900">{item.material?.name}</span>
-                          <span className="block text-xs font-mono text-gray-500">Unidade: {item.material?.unit || 'UNID'}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-gray-900">{item.material?.name}</span>
+                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${
+                              item.isVirtual 
+                                ? 'bg-amber-100 text-amber-800' 
+                                : 'bg-orange-100 text-orange-800'
+                            }`}>
+                              {item.isVirtual ? 'Separação' : 'Sobra'}
+                            </span>
+                          </div>
+                          <span className="block text-xs font-mono text-gray-500 mt-0.5">Unidade: {item.material?.unit || 'UNID'}</span>
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-black text-orange-600 bg-orange-50/20">
+                    <td className={`px-6 py-4 whitespace-nowrap text-center text-sm font-black ${
+                      item.isVirtual ? 'text-amber-700 bg-amber-50/20' : 'text-orange-700 bg-orange-50/20'
+                    }`}>
                       {item.quantity} {item.material?.unit || 'UNID'}
                     </td>
                     {user?.role === 'ADMIN' && (
@@ -185,10 +259,10 @@ export default function PendingReturns() {
                         </div>
                       </td>
                     )}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 max-w-xs truncate">
+                    <td className="px-6 py-4 text-sm text-gray-600 max-w-xs">
                       <div className="flex items-center gap-1.5">
                         <MapPin className="h-4 w-4 text-gray-400 shrink-0" />
-                        <div>
+                        <div className="truncate">
                           <span className="font-semibold text-gray-900 block truncate">{item.demand?.location}</span>
                           <span className="text-xs text-gray-500 block truncate">{item.demand?.description}</span>
                         </div>
@@ -200,31 +274,54 @@ export default function PendingReturns() {
                         {formatLocalDate(item.date, 'dd/MM/yyyy')}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium gap-2">
-                      {user?.role === 'ADMIN' && (
-                        <button
-                          onClick={() => setConfirmDialog({
-                            isOpen: true,
-                            returnId: item.id,
-                            materialName: item.material?.name || '',
-                            quantity: item.quantity,
-                            unit: item.material?.unit || 'UNID'
-                          })}
-                          className="mr-2 p-1.5 px-3 bg-green-50 hover:bg-green-100 text-green-700 rounded-lg text-xs font-bold inline-flex items-center gap-1 transition-all"
-                        >
-                          <CheckCircle className="h-3.5 w-3.5" /> Dar Baixa
-                        </button>
-                      )}
-                      {item.demandId ? (
-                        <Link
-                          to={`/demands/${item.demandId}`}
-                          className="p-1.5 px-3 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-bold inline-flex items-center gap-1 transition-all"
-                        >
-                          <ExternalLink className="h-3 w-3" /> Ver Demanda
-                        </Link>
-                      ) : (
-                        <span className="text-gray-400 text-xs italic">Sem Demanda</span>
-                      )}
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                      <div className="inline-flex items-center gap-2">
+                        {user?.role === 'ADMIN' && (
+                          item.isVirtual ? (
+                            <button
+                              onClick={() => setConfirmDialog({
+                                isOpen: true,
+                                type: 'deliver',
+                                demandId: item.demandId,
+                                location: item.demand?.location || '',
+                                returnId: '',
+                                materialName: '',
+                                quantity: 0,
+                                unit: ''
+                              })}
+                              className="p-1.5 px-3 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold inline-flex items-center gap-1 transition-all shadow-sm"
+                            >
+                              <Package className="h-3.5 w-3.5" /> Entregar Materiais
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => setConfirmDialog({
+                                isOpen: true,
+                                type: 'clear',
+                                returnId: item.id,
+                                materialName: item.material?.name || '',
+                                quantity: item.quantity,
+                                unit: item.material?.unit || 'UNID',
+                                demandId: '',
+                                location: ''
+                              })}
+                              className="p-1.5 px-3 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold inline-flex items-center gap-1 transition-all shadow-sm"
+                            >
+                              <CheckCircle className="h-3.5 w-3.5" /> Dar Baixa
+                            </button>
+                          )
+                        )}
+                        {item.demandId ? (
+                          <Link
+                            to={`/demands/${item.demandId}`}
+                            className="p-1.5 px-3 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-bold inline-flex items-center gap-1 transition-all"
+                          >
+                            <ExternalLink className="h-3 w-3" /> Ver Demanda
+                          </Link>
+                        ) : (
+                          <span className="text-gray-400 text-xs italic">Sem Demanda</span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -238,12 +335,16 @@ export default function PendingReturns() {
       <ConfirmDialog
         isOpen={confirmDialog.isOpen}
         onClose={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
-        onConfirm={handleConfirmClear}
-        title="Confirmar Recebimento de Sobra"
-        message={`Deseja confirmar que o material "${confirmDialog.materialName}" (${confirmDialog.quantity} ${confirmDialog.unit}) foi fisicamente recebido e retornado ao armazém?`}
-        confirmText="Confirmar Retorno"
+        onConfirm={handleConfirmAction}
+        title={confirmDialog.type === 'deliver' ? "Confirmar Entrega de Materiais" : "Confirmar Recebimento de Sobra"}
+        message={
+          confirmDialog.type === 'deliver' 
+            ? `Deseja registrar a entrega física de todos os materiais planejados para a demanda em "${confirmDialog.location}"? Isso fará com que fiquem sob custódia do eletricista e constem como pendentes de retorno até a execução do serviço.`
+            : `Deseja confirmar que o material "${confirmDialog.materialName}" (${confirmDialog.quantity} ${confirmDialog.unit}) foi fisicamente recebido de volta no almoxarifado?`
+        }
+        confirmText={confirmDialog.type === 'deliver' ? "Confirmar Entrega" : "Confirmar Retorno"}
         cancelText="Voltar"
-        variant="info"
+        variant={confirmDialog.type === 'deliver' ? "warning" : "info"}
       />
     </Layout>
   );

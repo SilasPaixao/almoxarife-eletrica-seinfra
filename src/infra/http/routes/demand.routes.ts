@@ -13,10 +13,12 @@ demandRouter.get('/pending-returns', DemandController.getPendingReturns as any);
 demandRouter.get('/separation/data', DemandController.getSeparationData as any);
 demandRouter.get('/separation/pdf/:electricianId', DemandController.downloadSeparationPdf as any);
 demandRouter.put('/pending-returns/:id/clear', adminMiddleware as any, DemandController.clearPendingReturn as any);
-demandRouter.post('/', adminMiddleware as any, DemandController.create as any);
-demandRouter.put('/:id', adminMiddleware as any, DemandController.update as any);
+demandRouter.put('/:id/deliver-materials', adminMiddleware as any, DemandController.deliverMaterials as any);
+demandRouter.post('/', adminMiddleware as any, upload.single('photo'), DemandController.create as any);
+demandRouter.put('/:id', adminMiddleware as any, upload.single('photo'), DemandController.update as any);
 demandRouter.delete('/:id', adminMiddleware as any, DemandController.delete as any);
 demandRouter.patch('/:id/approve', adminMiddleware as any, DemandController.approve as any);
+demandRouter.patch('/:id/toggle-exclude-separation', adminMiddleware as any, DemandController.toggleExcludeSeparation as any);
 
 demandRouter.post('/bulk', adminMiddleware as any, DemandController.bulkCreate as any);
 demandRouter.post('/:id/finish', upload.single('photo'), DemandController.finish as any);
