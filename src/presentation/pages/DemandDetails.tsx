@@ -364,6 +364,7 @@ export default function DemandDetails() {
   if (isLoading) return <Layout><div className="text-center py-20">Carregando...</div></Layout>;
   if (!demand) return <Layout><div className="text-center py-20">Demanda não encontrada.</div></Layout>;
 
+  const isAdmin = user?.role === 'ADMIN';
   const isElectrician = user?.role === 'ELECTRICIAN';
   const isDone = demand.status === 'PENDING_APPROVAL' || demand.status === 'CONCLUDED';
 
@@ -509,7 +510,7 @@ export default function DemandDetails() {
 
         {/* Action Form / Completion Summary */}
         <div className="lg:col-span-2">
-          {((demand.status === 'PENDING' && isElectrician) || (isElectrician && demand.status === 'PENDING_APPROVAL' && isEditingExecution)) ? (
+          {((demand.status === 'PENDING' && (isElectrician || isAdmin)) || (isElectrician && demand.status === 'PENDING_APPROVAL' && isEditingExecution)) ? (
             <form onSubmit={handleSubmit} className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 space-y-8">
               <div className="flex justify-between items-center border-b pb-4">
                 <h2 className="text-2xl font-bold text-gray-900">{isEditingExecution ? 'Editar Execução' : 'Concluir Serviço'}</h2>
