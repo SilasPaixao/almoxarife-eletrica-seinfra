@@ -7,6 +7,7 @@ import { ClipboardList, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { ptBR } from 'date-fns/locale';
 import { parseUTCDate, formatLocalDate } from '../utils/date.ts';
+import { IndexedDbService } from '../../infra/storage/indexedDbService.ts';
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -14,8 +15,17 @@ export default function Dashboard() {
   const { data: demands, isLoading } = useQuery({
     queryKey: ['demands'],
     queryFn: async () => {
-      const resp = await api.get('/demands');
-      return resp.data;
+      try {
+        const resp = await api.get('/demands');
+        if (resp.data) {
+          await IndexedDbService.saveCachedDemands(resp.data);
+          return resp.data;
+        }
+      } catch (err) {
+        console.warn('Dashboard: Failed to fetch demands. Loading offline cache...', err);
+        return await IndexedDbService.getAllCachedDemands();
+      }
+      return await IndexedDbService.getAllCachedDemands();
     }
   });
 
@@ -127,7 +137,7 @@ export default function Dashboard() {
                       </div>
                     </div>
                     <div className="flex items-center">
-                      <StatusBadge status={demand.status} />
+                      <StatusBadge status={demand.status} isOfflineCompleted={demand.isOfflineCompleted} />
                     </div>
                   </div>
                 </Link>
@@ -140,7 +150,16 @@ export default function Dashboard() {
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, isOfflineCompleted }: { status: string; isOfflineCompleted?: boolean }) {
+  if (isOfflineCompleted) {
+    return (
+      <span className="px-3 py-1 rounded-full text-xs font-bold uppercase bg-amber-100 text-amber-800 border border-amber-200 animate-pulse flex items-center gap-1">
+        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-ping"></span>
+        Sincronizando...
+      </span>
+    );
+  }
+
   const configs: any = {
     PENDING: { color: 'bg-yellow-100 text-yellow-800', label: 'Pendente' },
     PENDING_APPROVAL: { color: 'bg-blue-100 text-blue-800', label: 'Em Aprovação' },

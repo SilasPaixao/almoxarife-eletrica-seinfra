@@ -54,6 +54,7 @@ interface SeparationDetailResponse {
     date: string | Date;
     description: string;
     location: string;
+    materialsDelivered?: boolean;
     plannedMaterials: Array<{
       id: string;
       material: {
@@ -69,6 +70,7 @@ interface SeparationDetailResponse {
     date: string | Date;
     description: string;
     location: string;
+    materialsDelivered?: boolean;
     plannedMaterials: Array<{
       id: string;
       material: {
@@ -98,11 +100,23 @@ export default function MaterialSeparation() {
     }
   });
 
+  const deliverDemandMutation = useMutation({
+    mutationFn: async (demandId: string) => {
+      const resp = await api.put(`/demands/${demandId}/deliver-materials`);
+      return resp.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['separation-electricians'] });
+      queryClient.invalidateQueries({ queryKey: ['separation-details'] });
+    }
+  });
+
   // State
   const [selectedElectricianId, setSelectedElectricianId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({});
   const [demandIdToConfirmExclude, setDemandIdToConfirmExclude] = useState<string | null>(null);
+  const [demandIdToConfirmDeliver, setDemandIdToConfirmDeliver] = useState<string | null>(null);
 
   // Edit Demand State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -284,7 +298,7 @@ export default function MaterialSeparation() {
             <div>
               <p className="font-semibold">Como funciona a separação consolidada?</p>
               <p className="text-gray-600 text-xs mt-0.5">
-                Selecione uma dupla/equipe abaixo para compilar todos os materiais planejados de suas demandas pendentes de execução. O sistema soma as quantidades de cada item para gerar uma folha de separação consolidada, facilitando o trabalho do almoxarife de uma só vez.
+                Selecione uma dupla/equipe abaixo para compilar todos os materiais planejados de suas demandas pendentes de execução. O sistema soma as quantidades de cada item para gerar uma folha de separação consolidada.
               </p>
             </div>
           </div>
@@ -406,6 +420,42 @@ export default function MaterialSeparation() {
                         </div>
                       </div>
                       <div className="shrink-0 flex items-center gap-2">
+                        {isAdmin && (
+                          demand.materialsDelivered ? (
+                            <span className="p-1 px-2.5 bg-green-100 border border-green-200 text-green-800 rounded font-bold text-xs flex items-center gap-1 shadow-sm">
+                              ✓ Entregue
+                            </span>
+                          ) : (
+                            demandIdToConfirmDeliver === demand.id ? (
+                              <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 p-1 px-2 rounded-lg shadow-sm animate-pulse">
+                                <span className="text-[10px] font-black text-amber-800 uppercase">Entregar?</span>
+                                <button
+                                  onClick={() => {
+                                    deliverDemandMutation.mutate(demand.id);
+                                    setDemandIdToConfirmDeliver(null);
+                                  }}
+                                  className="p-0.5 px-2 bg-amber-600 hover:bg-amber-700 text-white rounded font-bold text-[10px] transition-colors"
+                                >
+                                  Sim
+                                </button>
+                                <button
+                                  onClick={() => setDemandIdToConfirmDeliver(null)}
+                                  className="p-0.5 px-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded font-bold text-[10px] transition-colors shadow-sm"
+                                >
+                                  Não
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setDemandIdToConfirmDeliver(demand.id)}
+                                className="p-1 px-2.5 bg-amber-50 hover:bg-amber-100 text-amber-700 hover:text-amber-800 rounded font-bold text-xs flex items-center gap-1 border border-amber-200 shadow-sm transition-colors"
+                                title="Entregar materiais"
+                              >
+                                <Package className="h-3.5 w-3.5" /> Entregar materiais
+                              </button>
+                            )
+                          )
+                        )}
                         {isAdmin && (
                           <button
                             onClick={() => handleEditDemand(demand)}
@@ -635,7 +685,7 @@ export default function MaterialSeparation() {
                   {detailData.totals?.length > 0 && (
                     <div className="bg-neutral-800/50 rounded-lg p-3 text-[11px] text-neutral-400 leading-relaxed border border-neutral-800">
                       <span className="font-bold text-neutral-300 block mb-0.5 uppercase tracking-wide">Dica do Almoxarife:</span>
-                      Imprima ou visualize esta lista no smartphone enquanto caminha pelas gôndolas para acelerar o processo.
+                      Imprima ou visualize esta lista no smartphone.
                     </div>
                   )}
                 </div>

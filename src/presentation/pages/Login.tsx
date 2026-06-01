@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.tsx';
+import { useOffline } from '../context/OfflineContext.tsx';
 import api from '../services/api.ts';
 import { Lock, User as UserIcon, Loader2 } from 'lucide-react';
 
@@ -10,6 +11,7 @@ export default function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
+  const { syncAllData } = useOffline();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -19,6 +21,8 @@ export default function Login() {
     try {
       const response = await api.post('/auth/login', { username, password });
       login(response.data.token, response.data.user);
+      // Trigger full local data cache in background
+      syncAllData().catch(err => console.warn('Background sync on login failed:', err));
       navigate('/');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Erro ao fazer login');

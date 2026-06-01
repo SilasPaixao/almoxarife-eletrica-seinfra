@@ -29,14 +29,19 @@ import { formatLocalDate } from '../utils/date.ts';
 import { ptBR } from 'date-fns/locale';
 import Modal from '../components/Modal.tsx';
 import ConfirmDialog from '../components/ConfirmDialog.tsx';
+import { IndexedDbService } from '../../infra/storage/indexedDbService.ts';
+import { useOffline } from '../context/OfflineContext.tsx';
 
 export default function DemandDetails() {
   const { id } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { isOnline, saveOfflineCompletion } = useOffline();
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
+  const extraFileInputRef = useRef<HTMLInputElement>(null);
   
   const [confirmDialog, setConfirmDialog] = useState({
     isOpen: false,
@@ -47,6 +52,8 @@ export default function DemandDetails() {
 
   const [photo, setPhoto] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [extraPhotos, setExtraPhotos] = useState<File[]>([]);
+  const [extraPhotoPreviews, setExtraPhotoPreviews] = useState<string[]>([]);
   const [usedMaterials, setUsedMaterials] = useState<any[]>([]);
   const [replacedMaterials, setReplacedMaterials] = useState<any[]>([]);
   const [vehicles, setVehicles] = useState<string[]>([]);
@@ -91,31 +98,264 @@ export default function DemandDetails() {
 
   const { data: demand, isLoading } = useQuery({
     queryKey: ['demand', id],
-    queryFn: async () => (await api.get(`/demands`)).data.find((d: any) => d.id === id),
+    queryFn: async () => {
+      const stringId = String(id);
+      
+      // Determine active online status
+      const online = isOnline && navigator.onLine;
+
+      // Log: ID solicitado
+      console.log(`[DemandDetails ID] ID solicitado da rota: "${stringId}"`);
+      
+      // Log: Se tentou API ou IndexedDB (origem)
+      if (!online) {
+        console.log(`[DemandDetails Origem] Buscando dados estritamente via IndexedDB (OFFLINE).`);
+      } else {
+        console.log(`[DemandDetails Origem] Buscando dados via API com cache IndexedDB (ONLINE).`);
+      }
+
+      // 1. Check in custom offline-created draft demands (STORE_OFFLINE_DEMANDS) using robust string comparison
+      try {
+        const offlineDemands = await IndexedDbService.getAllDemands();
+        console.log('[DemandDetails Debug] Pending IDs in STORE_OFFLINE_DEMANDS:', offlineDemands.map(d => String(d.id)));
+        const foundOffline = offlineDemands.find((od: any) => {
+          if (!od) return false;
+          const itemStringId = String(od.id).trim();
+          return itemStringId === stringId.trim() || itemStringId.toLowerCase() === stringId.trim().toLowerCase();
+        });
+        
+        if (foundOffline) {
+          console.log('[DemandDetails Debug] MATCH FOUND: Loaded from STORES_OFFLINE_DEMANDS (pending offline queue).');
+          // Log: Resultado encontrado no IndexedDB
+          console.log(`[DemandDetails Resultado IndexedDB] Encontrado na fila de criação offline:`, foundOffline);
+          
+          const users = (await IndexedDbService.getMetadata('users')) || [];
+          const materialsObj = (await IndexedDbService.getMetadata('materials')) || [];
+          const matchedElectricians = users.filter((u: any) => foundOffline.formData.electricianIds?.includes(u.id));
+
+          return {
+            id: foundOffline.id,
+            date: foundOffline.formData.date,
+            location: foundOffline.formData.location,
+            googleMapsUrl: foundOffline.formData.googleMapsUrl || '',
+            description: foundOffline.formData.description || '',
+            clientNumber: foundOffline.formData.clientNumber || '',
+            electricians: matchedElectricians,
+            status: 'PENDING',
+            isOfflinePending: true,
+            createdAt: foundOffline.createdAt,
+            plannedMaterials: foundOffline.formData.materials?.map((m: any) => {
+              const mat = materialsObj.find((x: any) => String(x.id) === String(m.materialId));
+              return {
+                id: `offline-pm-${m.materialId}`,
+                materialId: m.materialId,
+                quantity: m.quantity,
+                material: mat ? { id: mat.id, name: mat.name, unit: mat.unit } : { id: m.materialId, name: 'Material', unit: 'Un' }
+              };
+            }) || [],
+            photoUrl: foundOffline.photoBlob ? URL.createObjectURL(foundOffline.photoBlob) : null
+          };
+        }
+      } catch (err) {
+        console.warn('[DemandDetails Debug] Error reading STORES_OFFLINE_DEMANDS:', err);
+      }
+
+      // If we are OFFLINE, strictly load from IndexedDB and NEVER invoke API
+      if (!online) {
+        console.log('[DemandDetails Load State] App is OFFLINE. Proceeding strictly with IndexedDB source.');
+        
+        let offlineDemand = null;
+        try {
+          offlineDemand = await IndexedDbService.getCachedDemandById(stringId);
+          if (offlineDemand) {
+            // Log: Resultado encontrado no IndexedDB
+            console.log(`[DemandDetails Resultado IndexedDB] SUCCESS: Encontrado usando getCachedDemandById:`, offlineDemand);
+            return offlineDemand;
+          }
+        } catch (cacheErr) {
+          console.warn('[DemandDetails Debug] getCachedDemandById lookup failed:', cacheErr);
+        }
+
+        // Final failproof backup list scanning
+        try {
+          const allCached = await IndexedDbService.getAllCachedDemands();
+          console.log('[DemandDetails Load State] Scanning the full cached_demands list. Total available cached:', allCached.length);
+          offlineDemand = allCached.find((d: any) => {
+            if (!d) return false;
+            const itemStringId = String(d.id).trim();
+            const urlStringId = stringId.trim();
+            return itemStringId === urlStringId || itemStringId.toLowerCase() === urlStringId.toLowerCase() || Number(itemStringId) === Number(urlStringId);
+          });
+          if (offlineDemand) {
+            // Log: Resultado encontrado no IndexedDB
+            console.log(`[DemandDetails Resultado IndexedDB] SUCCESS: Encontrado varrendo a lista completa de cached_demands:`, offlineDemand);
+            return offlineDemand;
+          }
+        } catch (finalErr) {
+          console.error('[DemandDetails Debug] Scan fallback lookup failed:', finalErr);
+        }
+
+        // Log: Resultado encontrado no IndexedDB (failure)
+        console.log(`[DemandDetails Resultado IndexedDB] FAILURE: Demanda não foi encontrada no IndexedDB para o ID "${stringId}".`);
+        console.error('[DemandDetails Load State] FAILURE: Demand NOT found offline anywhere for ID:', stringId);
+        return null;
+      }
+
+      // If we are ONLINE, fetch with hybrid logic (Cached first, refresh on background)
+      console.log('[DemandDetails Load State] App is ONLINE. Proceeding with hybrid API + Cache strategy.');
+      try {
+        const cachedDemand = await IndexedDbService.getCachedDemandById(stringId);
+        if (cachedDemand) {
+          console.log('[DemandDetails Load State] Returning cached demand template and triggering background refresh...');
+          // Log: Resultado encontrado no IndexedDB (hybrid template choice)
+          console.log(`[DemandDetails Resultado IndexedDB] Encontrada cópia em cache para exibição imediata:`, cachedDemand);
+          
+          api.get('/demands').then(async (resp) => {
+            if (resp.data) {
+              await IndexedDbService.saveCachedDemands(resp.data, false);
+              const fresh = resp.data.find((d: any) => {
+                if (!d) return false;
+                const itemStringId = String(d.id).trim();
+                const urlStringId = stringId.trim();
+                return itemStringId === urlStringId || itemStringId.toLowerCase() === urlStringId.toLowerCase() || Number(itemStringId) === Number(urlStringId);
+              });
+              if (fresh) {
+                queryClient.setQueryData(['demand', id], fresh);
+              }
+            }
+          }).catch(err => {
+            console.warn('[DemandDetails Debug] Background refresh failed:', err);
+          });
+          return cachedDemand;
+        }
+      } catch (err) {
+        console.warn('[DemandDetails Debug] Error loading initial cached copy:', err);
+      }
+
+      // No cached demand exists, must fetch directly from the network
+      try {
+        console.log('[DemandDetails Load State] Demand not inside cache. Retrieving directly from API...');
+        const resp = await api.get('/demands');
+        if (resp.data) {
+          console.log('[DemandDetails Load State] Successfully fetched demands from API. Total count:', resp.data.length);
+          await IndexedDbService.saveCachedDemands(resp.data, false);
+          const found = resp.data.find((d: any) => {
+            if (!d) return false;
+            const itemStringId = String(d.id).trim();
+            const urlStringId = stringId.trim();
+            return itemStringId === urlStringId || itemStringId.toLowerCase() === urlStringId.toLowerCase() || Number(itemStringId) === Number(urlStringId);
+          });
+          if (found) {
+            console.log('[DemandDetails Load State] SUCCESS: Match found inside network response!', found);
+            return found;
+          }
+        }
+      } catch (apiErr) {
+        console.error('[DemandDetails Load State] Direct API fetching failed:', apiErr);
+      }
+
+      // Late fallback search
+      try {
+        const allCached = await IndexedDbService.getAllCachedDemands();
+        const finalFound = allCached.find((d: any) => {
+          if (!d) return false;
+          const itemStringId = String(d.id).trim();
+          const urlStringId = stringId.trim();
+          return itemStringId === urlStringId || itemStringId.toLowerCase() === urlStringId.toLowerCase() || Number(itemStringId) === Number(urlStringId);
+        });
+        if (finalFound) {
+          console.log('[DemandDetails Load State] SUCCESS: Late match found in cached_demands list:', finalFound);
+          // Log: Resultado encontrado no IndexedDB
+          console.log(`[DemandDetails Resultado IndexedDB] SUCCESS: Encontrada via busca tardia no cache:`, finalFound);
+          return finalFound;
+        }
+      } catch (err) {
+        console.error('[DemandDetails Debug] Late fallback lookup failed:', err);
+      }
+
+      console.warn('[DemandDetails Load State] FAILURE: Demand NOT found anywhere for ID:', stringId);
+      // Log: Resultado encontrado no IndexedDB (failure)
+      console.log(`[DemandDetails Resultado IndexedDB] Demanda não encontrada em nenhum repositório.`);
+      return null;
+    }
   });
 
   const { data: materials } = useQuery({
     queryKey: ['materials'],
-    queryFn: async () => (await api.get('/materials')).data,
+    queryFn: async () => {
+      const online = isOnline && navigator.onLine;
+      if (!online) {
+        console.log('[DemandDetails Metadata Load] App is OFFLINE. Loading materials directly from IndexedDB.');
+        return (await IndexedDbService.getMetadata('materials')) || [];
+      }
+      try {
+        const data = (await api.get('/materials')).data;
+        await IndexedDbService.saveMetadata('materials', data);
+        return data;
+      } catch (err) {
+        console.warn('DemandDetails: Loading cached materials...', err);
+        return (await IndexedDbService.getMetadata('materials')) || [];
+      }
+    }
   });
 
   const { data: electricians } = useQuery({
     queryKey: ['users'],
     queryFn: async () => {
-      const resp = await api.get('/users');
-      return resp.data.filter((u: any) => u.role === 'ELECTRICIAN' && u.status === 'APPROVED');
+      const online = isOnline && navigator.onLine;
+      if (!online) {
+        console.log('[DemandDetails Metadata Load] App is OFFLINE. Loading electricians (users) directly from IndexedDB.');
+        return (await IndexedDbService.getMetadata('electricians')) || [];
+      }
+      try {
+        const resp = await api.get('/users');
+        const list = resp.data.filter((u: any) => u.role === 'ELECTRICIAN' && u.status === 'APPROVED');
+        await IndexedDbService.saveMetadata('electricians', list);
+        return list;
+      } catch (err) {
+        console.warn('DemandDetails: Loading cached electricians...', err);
+        return (await IndexedDbService.getMetadata('electricians')) || [];
+      }
     },
     enabled: !!user && user.role === 'ADMIN'
   });
 
   const { data: registeredVehicles } = useQuery({
     queryKey: ['vehicles'],
-    queryFn: async () => (await api.get('/vehicles')).data,
+    queryFn: async () => {
+      const online = isOnline && navigator.onLine;
+      if (!online) {
+        console.log('[DemandDetails Metadata Load] App is OFFLINE. Loading vehicles directly from IndexedDB.');
+        return (await IndexedDbService.getMetadata('vehicles')) || [];
+      }
+      try {
+        const data = (await api.get('/vehicles')).data;
+        await IndexedDbService.saveMetadata('vehicles', data);
+        return data;
+      } catch (err) {
+        console.warn('DemandDetails: Loading cached vehicles...', err);
+        return (await IndexedDbService.getMetadata('vehicles')) || [];
+      }
+    }
   });
 
   const { data: registeredTools } = useQuery({
     queryKey: ['tools'],
-    queryFn: async () => (await api.get('/tools')).data,
+    queryFn: async () => {
+      const online = isOnline && navigator.onLine;
+      if (!online) {
+        console.log('[DemandDetails Metadata Load] App is OFFLINE. Loading tools directly from IndexedDB.');
+        return (await IndexedDbService.getMetadata('tools')) || [];
+      }
+      try {
+        const data = (await api.get('/tools')).data;
+        await IndexedDbService.saveMetadata('tools', data);
+        return data;
+      } catch (err) {
+        console.warn('DemandDetails: Loading cached tools...', err);
+        return (await IndexedDbService.getMetadata('tools')) || [];
+      }
+    }
   });
 
   // Calculate surplus materials (planned - used)
@@ -222,6 +462,21 @@ export default function DemandDetails() {
     }
   };
 
+  const handleExtraFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files) {
+      const addedFiles = Array.from(files);
+      setExtraPhotos(prev => [...prev, ...addedFiles]);
+      const addedPreviews = addedFiles.map(file => URL.createObjectURL(file));
+      setExtraPhotoPreviews(prev => [...prev, ...addedPreviews]);
+    }
+  };
+
+  const handleRemoveExtraPhoto = (index: number) => {
+    setExtraPhotos(prev => prev.filter((_, i) => i !== index));
+    setExtraPhotoPreviews(prev => prev.filter((_, i) => i !== index));
+  };
+
   const handleAddUsedMaterial = (matId: string) => {
     if (!matId) return;
     if (usedMaterials.find(m => m.materialId === matId)) return;
@@ -256,7 +511,7 @@ export default function DemandDetails() {
     });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!photo && !isEditingExecution) {
       setFeedback({ type: 'error', message: 'A foto do serviço é obrigatória!' });
@@ -273,10 +528,44 @@ export default function DemandDetails() {
       return;
     }
 
+    const executeOfflineSave = async () => {
+      try {
+        await saveOfflineCompletion(
+          id!,
+          usedMaterials,
+          replacedMaterials,
+          vehicles,
+          selectedTools,
+          trafo,
+          obs,
+          photo,
+          extraPhotos
+        );
+        setFeedback({ 
+          type: 'success', 
+          message: 'Sem internet! Serviço finalizado e salvo localmente de forma segura. A sincronização com a prefeitura ocorrerá automaticamente ao detectar conexão.' 
+        });
+        setTimeout(() => navigate('/'), 2500);
+      } catch (err) {
+        console.error('Error saving completion offline:', err);
+        setFeedback({ type: 'error', message: 'Erro ao registrar serviço localmente.' });
+      }
+    };
+
+    if (!isOnline || !navigator.onLine) {
+      console.log('[DemandDetails Completion] Device detected offline. Saving to local database indexedDB...');
+      await executeOfflineSave();
+      return;
+    }
+
+    console.log('[DemandDetails Completion] Device detected online. Attempting remote server API submission...');
     const formData = new FormData();
     if (photo) {
       formData.append('photo', photo);
     }
+    extraPhotos.forEach((file, index) => {
+      formData.append(`extra_photo_${index}`, file);
+    });
     formData.append('usedMaterials', JSON.stringify(usedMaterials));
     formData.append('replacedMaterials', JSON.stringify(replacedMaterials));
     formData.append('vehicles', vehicles.join(','));
@@ -284,7 +573,32 @@ export default function DemandDetails() {
     formData.append('transformerNumber', trafo);
     formData.append('observation', obs);
 
-    finishMutation.mutate(formData);
+    try {
+      setFeedback({ type: 'success', message: 'Enviando serviço concluído para a prefeitura...' });
+      const response = await api.post(`/demands/${id}/finish`, formData);
+      if (response.status >= 200 && response.status < 300) {
+        queryClient.invalidateQueries({ queryKey: ['demands'] });
+        queryClient.invalidateQueries({ queryKey: ['demand', id] });
+        setIsEditingExecution(false);
+        setFeedback({ type: 'success', message: 'Demanda enviada para aprovação do administrador!' });
+        setTimeout(() => navigate('/'), 2000);
+      } else {
+        throw new Error(`Código de status de API inválido: ${response.status}`);
+      }
+    } catch (err: any) {
+      const isNetworkError = !err.response || err.code === 'ERR_NETWORK' || err.message?.includes('Network Error') || !navigator.onLine;
+      if (isNetworkError) {
+        console.warn('[DemandDetails Completion] Server API post failed with network/connectivity error. Redirecting to offline local storage...', err);
+        await executeOfflineSave();
+      } else {
+        console.error('[DemandDetails Completion] Standard validation/API returned error:', err);
+        setFeedback({ 
+          type: 'error', 
+          message: err.response?.data?.error || 'Erro ao finalizar serviço. Verifique se preencheu todos os campos e a foto.' 
+        });
+        setTimeout(() => setFeedback(null), 5000);
+      }
+    }
   };
 
   const handleEditClick = () => {
@@ -299,7 +613,21 @@ export default function DemandDetails() {
         setSelectedTools(demand.tools || []);
         setTrafo(demand.transformerNumber || '');
         setObs(demand.observation || '');
-        setPhotoPreview(demand.photoUrl || null);
+        
+        const urls = demand.photoUrl ? demand.photoUrl.split(',') : [];
+        if (urls.length > 0) {
+          setPhotoPreview(urls[0]);
+          if (urls.length > 1) {
+            setExtraPhotoPreviews(urls.slice(1));
+          } else {
+            setExtraPhotoPreviews([]);
+          }
+        } else {
+          setPhotoPreview(null);
+          setExtraPhotoPreviews([]);
+        }
+        setPhoto(null);
+        setExtraPhotos([]);
         setIsEditingExecution(true);
       }
       return;
@@ -413,7 +741,7 @@ export default function DemandDetails() {
               )}
             </div>
           )}
-          <StatusBadge status={demand.status} />
+          <StatusBadge status={demand.status} isOfflineCompleted={demand.isOfflineCompleted} />
         </div>
       </div>
 
@@ -500,12 +828,46 @@ export default function DemandDetails() {
             </div>
           </div>
 
-          {isDone && (
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-              <h3 className="text-sm font-bold text-gray-800 mb-4 uppercase">Foto do Serviço</h3>
-              <img src={demand.photoUrl} alt="Serviço concluído" className="w-full rounded-xl shadow-inner border border-gray-100" />
-            </div>
-          )}
+          {isDone && (() => {
+            const photosList = demand.photoUrl ? demand.photoUrl.split(',') : [];
+            return (
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-4">
+                <h3 className="text-sm font-bold text-gray-800 uppercase">Fotos do Serviço</h3>
+                {photosList.length === 1 ? (
+                  <a 
+                    href={photosList[0]} 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="block group relative rounded-xl overflow-hidden shadow-inner border border-gray-100 hover:opacity-95 transition-opacity"
+                    title="Clique para abrir em tamanho real"
+                  >
+                    <img src={photosList[0]} alt="Serviço concluído" className="w-full rounded-xl object-cover max-h-96" />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold">
+                      Ampliar ↗
+                    </div>
+                  </a>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    {photosList.map((url: string, index: number) => (
+                      <a 
+                        key={index} 
+                        href={url} 
+                        target="_blank" 
+                        rel="noopener noreferrer" 
+                        className="relative rounded-xl overflow-hidden border border-gray-100 shadow-sm aspect-square bg-gray-50 hover:opacity-90 transition-opacity block group"
+                        title="Clique para abrir em tamanho real"
+                      >
+                        <img src={url} alt={`Serviço concluído ${index + 1}`} className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold font-sans">
+                          Ampliar ↗
+                        </div>
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Action Form / Completion Summary */}
@@ -520,7 +882,17 @@ export default function DemandDetails() {
                     onClick={() => {
                       setIsEditingExecution(false);
                       setPhoto(null);
-                      setPhotoPreview(demand?.photoUrl || null);
+                      setPhotoPreview(null);
+                      setExtraPhotos([]);
+                      setExtraPhotoPreviews([]);
+                      
+                      const urls = demand?.photoUrl ? demand.photoUrl.split(',') : [];
+                      if (urls.length > 0) {
+                        setPhotoPreview(urls[0]);
+                        if (urls.length > 1) {
+                          setExtraPhotoPreviews(urls.slice(1));
+                        }
+                      }
                     }}
                     className="text-gray-500 hover:text-gray-700 text-sm font-medium"
                   >
@@ -562,47 +934,81 @@ export default function DemandDetails() {
               
               {/* Photo Upload */}
               <div>
-                <label className="block text-sm font-bold text-gray-700 mb-4">Foto do Serviço (Obrigatório)</label>
+                <label className="block text-sm font-bold text-gray-700 mb-4 font-sans">Fotos do Serviço (Mínimo 1 obrigatória)</label>
                 <div className="space-y-4">
-                  <div 
-                    className="w-full h-64 border-2 border-dashed border-gray-300 rounded-2xl flex flex-col items-center justify-center overflow-hidden relative bg-gray-50 shadow-inner"
-                  >
-                    {photoPreview ? (
-                      <>
-                        <img src={photoPreview} alt="Preview" className="w-full h-full object-cover" />
-                        <button 
-                          type="button"
-                          onClick={() => { setPhoto(null); setPhotoPreview(null); }}
-                          className="absolute top-2 right-2 bg-red-600 text-white p-2 rounded-full shadow-lg hover:bg-red-700 transition-colors"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </>
-                    ) : (
-                      <div className="text-center p-6">
-                        <Camera className="h-12 w-12 text-gray-300 mx-auto mb-2" />
-                        <p className="text-xs text-gray-400 font-medium">Nenhuma foto selecionada</p>
-                      </div>
-                    )}
+                  {/* Primary Photo */}
+                  <div className="border border-gray-100 rounded-2xl p-4 bg-gray-50/50">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block mb-2 font-sans">Foto Principal (Obrigatória)</span>
+                    <div 
+                      className="w-full h-56 border-2 border-dashed border-gray-300 rounded-2xl flex flex-col items-center justify-center overflow-hidden relative bg-white shadow-inner"
+                    >
+                      {photoPreview ? (
+                        <>
+                          <img src={photoPreview} alt="Preview" className="w-full h-full object-cover" />
+                          <button 
+                            type="button"
+                            onClick={() => { setPhoto(null); setPhotoPreview(null); }}
+                            className="absolute top-2 right-2 bg-red-600 text-white p-2 rounded-full shadow-lg hover:bg-red-700 transition-colors"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </>
+                      ) : (
+                        <div className="text-center p-6">
+                          <Camera className="h-10 w-10 text-gray-300 mx-auto mb-2" />
+                          <p className="text-xs text-gray-400 font-medium font-sans">Nenhuma foto principal selecionada</p>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4 mt-3">
+                      <button 
+                        type="button" 
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex flex-col items-center justify-center gap-2 p-3 bg-blue-50 text-blue-700 rounded-xl font-bold hover:bg-blue-100 transition-all border border-blue-100 shadow-sm"
+                      >
+                        <Camera className="h-5 w-5" />
+                        <span className="text-xs">Tirar Foto Principal</span>
+                      </button>
+                      <button 
+                        type="button" 
+                        onClick={() => galleryInputRef.current?.click()}
+                        className="flex flex-col items-center justify-center gap-2 p-3 bg-gray-50 text-gray-700 rounded-xl font-bold hover:bg-gray-100 transition-all border border-gray-200 shadow-sm"
+                      >
+                        <Image className="h-5 w-5" />
+                        <span className="text-xs">Carregar da Galeria</span>
+                      </button>
+                    </div>
                   </div>
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    <button 
-                      type="button" 
-                      onClick={() => fileInputRef.current?.click()}
-                      className="flex flex-col items-center justify-center gap-2 p-4 bg-blue-50 text-blue-700 rounded-2xl font-bold hover:bg-blue-100 transition-all border border-blue-100 shadow-sm"
-                    >
-                      <Camera className="h-6 w-6" />
-                      <span className="text-xs">Tirar Foto</span>
-                    </button>
-                    <button 
-                      type="button" 
-                      onClick={() => galleryInputRef.current?.click()}
-                      className="flex flex-col items-center justify-center gap-2 p-4 bg-gray-50 text-gray-700 rounded-2xl font-bold hover:bg-gray-100 transition-all border border-gray-200 shadow-sm"
-                    >
-                      <Image className="h-6 w-6" />
-                      <span className="text-xs">Carregar Galeria</span>
-                    </button>
+
+                  {/* Additional Photos List */}
+                  <div className="border border-gray-100 rounded-2xl p-4 bg-gray-50/50">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block mb-3 font-sans">Fotos Adicionais (Opcional)</span>
+                    
+                    <div className="grid grid-cols-3 gap-3">
+                      {extraPhotoPreviews.map((preview, index) => (
+                        <div key={index} className="aspect-square border border-gray-200 rounded-xl overflow-hidden relative bg-white shadow-sm">
+                          <img src={preview} alt={`Extra ${index}`} className="w-full h-full object-cover" />
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveExtraPhoto(index)}
+                            className="absolute top-1 right-1 bg-red-600 text-white p-1 rounded-full shadow-md hover:bg-red-700 transition-colors"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
+                      
+                      {/* Plus/Add Card */}
+                      <button
+                        type="button"
+                        onClick={() => extraFileInputRef.current?.click()}
+                        className="aspect-square border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center bg-white hover:border-blue-500 hover:text-blue-600 transition-all shadow-sm"
+                      >
+                        <Plus className="h-6 w-6 text-gray-400" />
+                        <span className="text-[10px] text-gray-400 font-bold mt-1 font-sans">Mais Fotos</span>
+                      </button>
+                    </div>
                   </div>
                   
                   <input 
@@ -619,6 +1025,14 @@ export default function DemandDetails() {
                     className="hidden" 
                     accept="image/*" 
                     onChange={handleFileChange} 
+                  />
+                  <input 
+                    ref={extraFileInputRef} 
+                    type="file" 
+                    className="hidden" 
+                    accept="image/*" 
+                    multiple
+                    onChange={handleExtraFileChange} 
                   />
                 </div>
               </div>
@@ -1547,7 +1961,16 @@ export default function DemandDetails() {
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, isOfflineCompleted }: { status: string; isOfflineCompleted?: boolean }) {
+  if (isOfflineCompleted) {
+    return (
+      <span className="px-4 py-1 rounded-full text-xs font-bold uppercase bg-amber-100 text-amber-800 border border-amber-200 animate-pulse flex items-center gap-1.5">
+        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-ping"></span>
+        Offline (Pendente Envio)
+      </span>
+    );
+  }
+
   const configs: any = {
     PENDING: { color: 'bg-yellow-100 text-yellow-800', label: 'Pendente' },
     PENDING_APPROVAL: { color: 'bg-blue-100 text-blue-800', label: 'Em Aprovação' },

@@ -84,10 +84,23 @@ export class StorageService {
       referencePhotoUrl = parts[1] || null;
     }
 
+    let mappedPhotoUrl = null;
+    if (demand.photoUrl) {
+      if (demand.photoUrl.includes(',')) {
+        mappedPhotoUrl = demand.photoUrl
+          .split(',')
+          .map((part: string) => StorageService.getFileUrl(part.trim()))
+          .filter(Boolean)
+          .join(',');
+      } else {
+        mappedPhotoUrl = StorageService.getFileUrl(demand.photoUrl);
+      }
+    }
+
     const mapped = {
       ...demand,
       description,
-      photoUrl: StorageService.getFileUrl(demand.photoUrl),
+      photoUrl: mappedPhotoUrl,
       referencePhotoUrl: StorageService.getFileUrl(referencePhotoUrl)
     };
     

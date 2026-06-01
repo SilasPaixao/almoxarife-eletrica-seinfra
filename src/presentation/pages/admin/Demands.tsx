@@ -11,10 +11,13 @@ import { CheckCircle, AlertCircle } from 'lucide-react';
 import { parseUTCDate, formatLocalDate } from '../../utils/date.ts';
 
 import ConfirmDialog from '../../components/ConfirmDialog.tsx';
+import { useOffline } from '../../context/OfflineContext.tsx';
+import { IndexedDbService } from '../../../infra/storage/indexedDbService.ts';
 
 export default function Demands() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { isOnline, saveOfflineDemand, pendingOfflineDemands } = useOffline();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingDemand, setEditingDemand] = useState<any | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -69,12 +72,30 @@ export default function Demands() {
 
   const { data: demands, isLoading } = useQuery({
     queryKey: ['demands'],
-    queryFn: async () => (await api.get('/demands')).data,
+    queryFn: async () => {
+      try {
+        const data = (await api.get('/demands')).data;
+        await IndexedDbService.saveCachedDemands(data);
+        return data;
+      } catch (err) {
+        console.warn('Demands list: Failed to fetch online. Loading cached demands...', err);
+        return await IndexedDbService.getAllCachedDemands();
+      }
+    }
   });
 
   const { data: materials } = useQuery({
     queryKey: ['materials'],
-    queryFn: async () => (await api.get('/materials')).data,
+    queryFn: async () => {
+      try {
+        const data = (await api.get('/materials')).data;
+        await IndexedDbService.saveMetadata('materials', data);
+        return data;
+      } catch (err) {
+        console.warn('Demands list: Failed to fetch materials. Loading cached materials...', err);
+        return (await IndexedDbService.getMetadata('materials')) || [];
+      }
+    }
   });
 
   const filteredMaterials = Array.isArray(materials)
@@ -84,8 +105,15 @@ export default function Demands() {
   const { data: electricians } = useQuery({
     queryKey: ['users'],
     queryFn: async () => {
-      const resp = await api.get('/users');
-      return resp.data.filter((u: any) => u.role === 'ELECTRICIAN' && u.status === 'APPROVED');
+      try {
+        const resp = await api.get('/users');
+        const list = resp.data.filter((u: any) => u.role === 'ELECTRICIAN' && u.status === 'APPROVED');
+        await IndexedDbService.saveMetadata('electricians', list);
+        return list;
+      } catch (err) {
+        console.warn('Demands list: Failed to fetch electricians. Loading cached electricians...', err);
+        return (await IndexedDbService.getMetadata('electricians')) || [];
+      }
     }
   });
 
@@ -178,7 +206,16 @@ export default function Demands() {
 
   const { data: users } = useQuery({
     queryKey: ['users'],
-    queryFn: async () => (await api.get('/users')).data,
+    queryFn: async () => {
+      try {
+        const data = (await api.get('/users')).data;
+        await IndexedDbService.saveMetadata('users', data);
+        return data;
+      } catch (err) {
+        console.warn('Demands list: Failed to fetch users. Loading cached users...', err);
+        return (await IndexedDbService.getMetadata('users')) || [];
+      }
+    }
   });
 
   const handleImportJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -297,9 +334,17 @@ export default function Demands() {
   const [activeTab, setActiveTab] = useState<'PENDING' | 'PENDING_APPROVAL' | 'CONCLUDED'>('PENDING');
 
   const deleteDemandMutation = useMutation({
-    mutationFn: (id: string) => api.delete(`/demands/${id}`),
+    mutationFn: async (id: string) => {
+      if (id.startsWith('offline-')) {
+        await IndexedDbService.deleteDemand(id);
+      } else {
+        await api.delete(`/demands/${id}`);
+      }
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['demands'] });
+      // The context listener updates pendingOfflineDemands automatically
+      showFeedback('success', 'Registro removido com sucesso.');
     }
   });
 
@@ -314,13 +359,45 @@ export default function Demands() {
     }
   });
 
+  const mappedOfflineDemands = (pendingOfflineDemands || []).map((od: any) => {
+    const matchedElectricians = (users || []).filter((u: any) => od.formData.electricianIds?.includes(u.id));
+
+    return {
+      id: od.id,
+      date: od.formData.date,
+      location: od.formData.location,
+      googleMapsUrl: od.formData.googleMapsUrl || '',
+      description: od.formData.description || '',
+      clientNumber: od.formData.clientNumber || '',
+      electricians: matchedElectricians,
+      status: 'PENDING',
+      isOfflinePending: true,
+      createdAt: od.createdAt,
+      plannedMaterials: od.formData.materials?.map((m: any) => {
+        const mat = materials?.find((x: any) => x.id === m.materialId);
+        return {
+          id: `offline-pm-${m.materialId}`,
+          materialId: m.materialId,
+          quantity: m.quantity,
+          material: mat ? { id: mat.id, name: mat.name, unit: mat.unit } : { id: m.materialId, name: 'Material', unit: 'Un' }
+        };
+      }) || [],
+      photoUrl: od.photoBlob ? URL.createObjectURL(od.photoBlob) : null
+    };
+  });
+
+  const combinedDemands = [
+    ...mappedOfflineDemands,
+    ...(demands || [])
+  ];
+
   const currentYear = new Date().getFullYear();
-  const yearDemands = demands?.filter((d: any) => {
+  const yearDemands = combinedDemands.filter((d: any) => {
     if (!d.date) return false;
     return parseUTCDate(d.date).getFullYear() === currentYear;
   });
 
-  const filteredDemands = yearDemands?.filter((d: any) => {
+  const filteredDemands = yearDemands.filter((d: any) => {
     const matchesSearch = 
       d.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
       d.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -417,8 +494,14 @@ export default function Demands() {
               {filteredDemands?.map((demand: any) => (
                 <tr 
                   key={demand.id} 
-                  className="hover:bg-gray-50 transition-colors cursor-pointer group"
-                  onClick={() => navigate(`/demands/${demand.id}`)}
+                  className={`hover:bg-gray-50 transition-colors cursor-pointer group ${demand.isOfflinePending ? 'bg-amber-50/25 border-l-4 border-l-amber-500' : ''}`}
+                  onClick={() => {
+                    if (demand.isOfflinePending) {
+                      handleEditDemand(demand);
+                    } else {
+                      navigate(`/demands/${demand.id}`);
+                    }
+                  }}
                 >
                   <td className="px-6 py-4 text-sm text-gray-900 font-medium group-hover:text-blue-600 transition-colors">
                     {formatLocalDate(demand.date, 'dd/MM/yyyy')}
@@ -431,9 +514,9 @@ export default function Demands() {
                     <div className="flex flex-wrap gap-1">
                       {demand.electricians && demand.electricians.length > 0 ? (
                         demand.electricians.map((e: any) => (
-                          <span key={e.id} className="bg-gray-100 px-2 py-0.5 rounded text-xs">
-                            {e.name}
-                          </span>
+                           <span key={e.id} className="bg-gray-100 px-2 py-0.5 rounded text-xs">
+                             {e.name}
+                           </span>
                         ))
                       ) : (
                         <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded text-[10px] font-bold uppercase animate-pulse border border-red-100">
@@ -443,11 +526,11 @@ export default function Demands() {
                     </div>
                   </td>
                   <td className="px-6 py-4">
-                    <StatusBadge status={demand.status} />
+                    <StatusBadge status={demand.status} isOfflinePending={demand.isOfflinePending} />
                   </td>
                   <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-end gap-3 items-center">
-                      {demand.status === 'PENDING' && !demand.materialsDelivered && demand.plannedMaterials?.length > 0 && (
+                      {!demand.isOfflinePending && demand.status === 'PENDING' && !demand.materialsDelivered && demand.plannedMaterials?.length > 0 && (
                         <button 
                           onClick={() => {
                             setConfirmDialog({
@@ -474,8 +557,10 @@ export default function Demands() {
                         onClick={() => {
                           setConfirmDialog({
                             isOpen: true,
-                            title: 'Excluir Demanda',
-                            message: 'Tem certeza que deseja excluir esta demanda definitivamente?',
+                            title: demand.isOfflinePending ? 'Excluir Demanda Local' : 'Excluir Demanda',
+                            message: demand.isOfflinePending 
+                              ? 'Deseja excluir esta demanda offline pendente? Esta ação é definitiva.'
+                              : 'Tem certeza que deseja excluir esta demanda definitivamente?',
                             onConfirm: () => deleteDemandMutation.mutate(demand.id)
                           });
                         }}
@@ -499,13 +584,56 @@ export default function Demands() {
         maxWidth="max-w-2xl"
       >
         <form 
-          onSubmit={(e) => { 
+          onSubmit={async (e) => { 
             e.preventDefault(); 
-            const data = buildMultipartFormData();
             if (editingDemand) {
-              updateMutation.mutate({ id: editingDemand.id, data });
+              if (editingDemand.isOfflinePending) {
+                try {
+                  const photoBlob = selectedPhoto ? (selectedPhoto as Blob) : (editingDemand.photoBlob || null);
+                  const photoName = selectedPhoto ? selectedPhoto.name : (editingDemand.photoName || null);
+                  const photoType = selectedPhoto ? selectedPhoto.type : (editingDemand.photoType || null);
+
+                  await IndexedDbService.saveDemand({
+                    id: editingDemand.id,
+                    formData: {
+                      date: formData.date,
+                      location: formData.location,
+                      googleMapsUrl: formData.googleMapsUrl || '',
+                      description: formData.description || '',
+                      clientNumber: formData.clientNumber || '',
+                      electricianIds: formData.electricianIds || [],
+                      materials: formData.materials || []
+                    },
+                    photoBlob,
+                    photoName,
+                    photoType,
+                    createdAt: editingDemand.createdAt || Date.now()
+                  });
+                  showFeedback('success', 'Alterações na demanda offline salvas localmente!');
+                  setIsModalOpen(false);
+                  resetForm();
+                  // Trigger direct storage read automatically handled by the hook
+                } catch (err) {
+                  showFeedback('error', 'Erro ao salvar alterações da demanda offline.');
+                }
+              } else {
+                const data = buildMultipartFormData();
+                updateMutation.mutate({ id: editingDemand.id, data });
+              }
             } else {
-              createMutation.mutate(data);
+              if (!isOnline) {
+                try {
+                  await saveOfflineDemand(formData, selectedPhoto);
+                  showFeedback('success', 'Conexão indisponível! Demanda salva localmente de forma segura. Sincronização automática quando a internet retornar.');
+                  setIsModalOpen(false);
+                  resetForm();
+                } catch (err) {
+                  showFeedback('error', 'Erro ao registrar nova demanda offline.');
+                }
+              } else {
+                const data = buildMultipartFormData();
+                createMutation.mutate(data);
+              }
             }
           }} 
           className="p-6 space-y-6"
@@ -781,7 +909,15 @@ export default function Demands() {
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, isOfflinePending }: { status: string; isOfflinePending?: boolean }) {
+  if (isOfflinePending) {
+    return (
+      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-100 text-amber-800 border border-amber-200 animate-pulse">
+        Offline (Pendente)
+      </span>
+    );
+  }
+
   const configs: any = {
     PENDING: { color: 'bg-yellow-100 text-yellow-800', label: 'Pendente' },
     PENDING_APPROVAL: { color: 'bg-blue-100 text-blue-800', label: 'Em Aprovação' },

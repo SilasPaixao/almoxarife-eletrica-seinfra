@@ -21,6 +21,6 @@ demandRouter.patch('/:id/approve', adminMiddleware as any, DemandController.appr
 demandRouter.patch('/:id/toggle-exclude-separation', adminMiddleware as any, DemandController.toggleExcludeSeparation as any);
 
 demandRouter.post('/bulk', adminMiddleware as any, DemandController.bulkCreate as any);
-demandRouter.post('/:id/finish', upload.single('photo'), DemandController.finish as any);
+demandRouter.post('/:id/finish', upload.any(), DemandController.finish as any);
 
 export { demandRouter };

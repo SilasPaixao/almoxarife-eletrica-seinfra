@@ -411,17 +411,36 @@ export class DemandController {
       } = req.body;
       
       console.log(`[DemandController.finish] Body:`, req.body);
-      console.log(`[DemandController.finish] File:`, req.file ? 'Received' : 'Missing');
+      
+      const filesToProcess: any[] = [];
+      if (req.file) {
+        filesToProcess.push(req.file);
+      }
+      if (req.files && Array.isArray(req.files)) {
+        filesToProcess.push(...req.files);
+      }
+
+      console.log(`[DemandController.finish] Processing ${filesToProcess.length} uploaded files`);
 
       let photoUrl = null;
-      if (req.file) {
-        const fileKey = `services/${id}/${Date.now()}-${req.file.originalname}`;
-        photoUrl = await StorageService.uploadFile(
-          'service-photos',
-          fileKey,
-          req.file.buffer,
-          req.file.mimetype
-        );
+      if (filesToProcess.length > 0) {
+        const uploadedUrls: string[] = [];
+        for (let i = 0; i < filesToProcess.length; i++) {
+          const file = filesToProcess[i];
+          const fileKey = `services/${id}/${Date.now()}-${i}-${file.originalname}`;
+          const uploadedUrl = await StorageService.uploadFile(
+            'service-photos',
+            fileKey,
+            file.buffer,
+            file.mimetype
+          );
+          if (uploadedUrl) {
+            uploadedUrls.push(uploadedUrl);
+          }
+        }
+        if (uploadedUrls.length > 0) {
+          photoUrl = uploadedUrls.join(',');
+        }
       }
 
       const demand = await prisma.demand.findUnique({
