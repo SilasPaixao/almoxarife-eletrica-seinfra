@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Layout from '../../components/Layout.tsx';
 import Modal from '../../components/Modal.tsx';
 import api from '../../services/api.ts';
-import { Plus, Search, FileDown, Upload, X, Loader2, Calendar, MapPin, User, ClipboardList, Trash2, Package, Pencil, ExternalLink, Camera } from 'lucide-react';
+import { Plus, Search, FileDown, Upload, X, Loader2, Calendar, MapPin, User, ClipboardList, Trash2, Package, Pencil, ExternalLink, Camera, Clock } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { CheckCircle, AlertCircle } from 'lucide-react';
@@ -175,7 +175,9 @@ export default function Demands() {
       electricianIds: demand.electricians?.map((e: any) => e.id) || [],
       materials: demand.plannedMaterials?.map((pm: any) => ({
         materialId: pm.materialId,
-        quantity: pm.quantity
+        quantity: pm.quantity,
+        borrowed: pm.borrowed || false,
+        borrowedDeadline: pm.borrowedDeadline ? formatLocalDate(pm.borrowedDeadline, 'yyyy-MM-dd') : ''
       })) || []
     });
     setIsModalOpen(true);
@@ -848,9 +850,31 @@ export default function Demands() {
               {formData.materials.map((m) => {
                 const material = materials?.find((mat: any) => mat.id === m.materialId);
                 return (
-                  <div key={m.materialId} className="flex items-center justify-between bg-gray-50 p-3 rounded-lg border border-gray-200">
+                  <div key={m.materialId} className="flex items-center justify-between bg-gray-50 p-3 rounded-lg border border-gray-200 gap-4">
                     <span className="text-sm font-medium text-gray-700">{material?.name}</span>
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormData({
+                            ...formData,
+                            materials: formData.materials.map(mat => 
+                              mat.materialId === m.materialId 
+                                ? { ...mat, borrowed: !mat.borrowed } 
+                                : mat
+                            )
+                          });
+                        }}
+                        className={`px-2.5 py-1 text-xs font-bold rounded-lg border transition-all flex items-center gap-1 shrink-0 cursor-pointer ${
+                          m.borrowed 
+                            ? 'bg-amber-100 border-amber-300 text-amber-800' 
+                            : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-700'
+                        }`}
+                        title="Marcar material como emprestado"
+                      >
+                        <Clock className="h-3 w-3" />
+                        <span>{m.borrowed ? 'Emprestado' : 'Empréstimo?'}</span>
+                      </button>
                       <input
                         type="number"
                         min="1"

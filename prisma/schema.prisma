@@ -95,12 +95,14 @@ model Demand {
 }
 
 model DemandMaterial {
-  id         String   @id @default(uuid())
-  demandId   String
-  demand     Demand   @relation(fields: [demandId], references: [id], onDelete: Cascade)
-  materialId String
-  material   Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
-  quantity   Int
+  id               String    @id @default(uuid())
+  demandId         String
+  demand           Demand    @relation(fields: [demandId], references: [id], onDelete: Cascade)
+  materialId       String
+  material         Material  @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  quantity         Int
+  borrowed         Boolean   @default(false)
+  borrowedDeadline DateTime?
 
   @@map("demand_materials")
 }

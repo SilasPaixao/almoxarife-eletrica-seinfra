@@ -169,6 +169,8 @@ export class DemandController {
             create: (parsedMaterials || []).map((m: any) => ({
               materialId: m.materialId,
               quantity: Number(m.quantity),
+              borrowed: m.borrowed === true || m.borrowed === 'true',
+              borrowedDeadline: m.borrowedDeadline ? parseDateAtNoon(m.borrowedDeadline) : null,
             })),
           },
         },
@@ -329,6 +331,8 @@ export class DemandController {
               demandId: id,
               materialId: m.materialId,
               quantity: Number(m.quantity) || 0,
+              borrowed: m.borrowed === true || m.borrowed === 'true',
+              borrowedDeadline: m.borrowedDeadline ? parseDateAtNoon(m.borrowedDeadline) : null,
             }))
           });
           materialsChanged = true;
@@ -1143,6 +1147,85 @@ export class DemandController {
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: 'Erro ao gerar PDF de separação de kit.' });
+    }
+  }
+
+  static async getBorrowedMaterials(req: AuthRequest, res: Response) {
+    try {
+      const items = await prisma.demandMaterial.findMany({
+        where: {
+          borrowed: true
+        },
+        include: {
+          material: true,
+          demand: {
+            include: {
+              electricians: { select: { id: true, name: true } }
+            }
+          }
+        },
+        orderBy: {
+          borrowedDeadline: 'asc'
+        }
+      });
+      res.json(items);
+    } catch (error) {
+      console.error('[DemandController.getBorrowedMaterials] Error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  static async updateDemandMaterial(req: AuthRequest, res: Response) {
+    try {
+      const { id } = req.params;
+      const { borrowedDeadline, borrowed, quantity } = req.body;
+
+      const demandMaterial = await prisma.demandMaterial.findUnique({
+        where: { id }
+      });
+
+      if (!demandMaterial) {
+        return res.status(404).json({ error: 'Demand material not found' });
+      }
+
+      const updateData: any = {};
+      if (borrowedDeadline !== undefined) {
+        updateData.borrowedDeadline = borrowedDeadline ? parseDateAtNoon(borrowedDeadline) : null;
+      }
+      if (borrowed !== undefined) {
+        updateData.borrowed = borrowed;
+      }
+      if (quantity !== undefined) {
+        updateData.quantity = Number(quantity);
+      }
+
+      const updated = await prisma.demandMaterial.update({
+        where: { id },
+        data: updateData,
+        include: {
+          material: true,
+          demand: true
+        }
+      });
+
+      // Log action
+      await AuditService.log(
+        'UPDATE', 
+        'DEMAND_MATERIAL', 
+        req.user!.id, 
+        id, 
+        { 
+          borrowedDeadline, 
+          borrowed, 
+          materialName: updated.material.name, 
+          demandId: updated.demandId 
+        }
+      );
+
+      res.json(updated);
+    } catch (error) {
+      console.error('[DemandController.updateDemandMaterial] Error:', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
   }
 }

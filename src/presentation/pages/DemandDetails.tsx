@@ -465,7 +465,7 @@ export default function DemandDetails() {
   const handleExtraFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files) {
-      const addedFiles = Array.from(files);
+      const addedFiles = Array.from(files) as File[];
       setExtraPhotos(prev => [...prev, ...addedFiles]);
       const addedPreviews = addedFiles.map(file => URL.createObjectURL(file));
       setExtraPhotoPreviews(prev => [...prev, ...addedPreviews]);

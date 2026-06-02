@@ -322,8 +322,18 @@ export function OfflineProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         console.error('[Offline Sync] Failed to cache users:', err);
       }
+
+      try {
+        const borrowedRes = await api.get('/demands/borrowed-materials');
+        if (borrowedRes.data) {
+          await IndexedDbService.saveMetadata('borrowed_materials', borrowedRes.data);
+          console.log('[Offline Sync] Successfully cached borrowed materials:', borrowedRes.data.length);
+        }
+      } catch (err) {
+        console.error('[Offline Sync] Failed to cache borrowed materials:', err);
+      }
     } else {
-      console.log('[Offline Sync] Skipping /users cache sync since user is not an ADMIN.');
+      console.log('[Offline Sync] Skipping /users and /borrowed-materials cache sync since user is not an ADMIN.');
     }
 
     try {

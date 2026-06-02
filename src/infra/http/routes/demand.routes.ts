@@ -9,6 +9,8 @@ const upload = multer({ storage: multer.memoryStorage() });
 demandRouter.use(authMiddleware as any);
 
 demandRouter.get('/', DemandController.getAll as any);
+demandRouter.get('/borrowed-materials', DemandController.getBorrowedMaterials as any);
+demandRouter.patch('/demand-material/:id', adminMiddleware as any, DemandController.updateDemandMaterial as any);
 demandRouter.get('/pending-returns', DemandController.getPendingReturns as any);
 demandRouter.get('/separation/data', DemandController.getSeparationData as any);
 demandRouter.get('/separation/pdf/:electricianId', DemandController.downloadSeparationPdf as any);

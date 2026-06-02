@@ -38,6 +38,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { name: 'Kits para Separação', path: '/admin/separation', icon: Layers },
     { name: 'Materiais', path: '/admin/materials', icon: Package },
     { name: 'Sobras a Retornar', path: '/admin/pending-returns', icon: RotateCcw },
+    { name: 'Materiais Emprestados', path: '/admin/borrowed', icon: Clock },
     { name: 'Materiais Recuperados', path: '/admin/recovered', icon: RotateCw },
     { name: 'Veículos', path: '/admin/vehicles', icon: Truck },
     { name: 'Ferramentas', path: '/admin/tools', icon: Wrench },
