@@ -8,6 +8,8 @@ export interface OfflineDemand {
     clientNumber: string;
     electricianIds: string[];
     materials: Array<{ materialId: string; quantity: number }>;
+    isPriority?: boolean;
+    priorityExecutionDate?: string;
   };
   photoBlob: Blob | null;
   photoName: string | null;

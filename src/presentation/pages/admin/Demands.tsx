@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Layout from '../../components/Layout.tsx';
 import Modal from '../../components/Modal.tsx';
 import api from '../../services/api.ts';
-import { Plus, Search, FileDown, Upload, X, Loader2, Calendar, MapPin, User, ClipboardList, Trash2, Package, Pencil, ExternalLink, Camera, Clock } from 'lucide-react';
+import { Plus, Search, FileDown, Upload, X, Loader2, Calendar, MapPin, User, ClipboardList, Trash2, Package, Pencil, ExternalLink, Camera, Clock, Star, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { CheckCircle, AlertCircle } from 'lucide-react';
@@ -42,7 +42,9 @@ export default function Demands() {
     description: '',
     clientNumber: '',
     electricianIds: [] as string[],
-    materials: [] as { materialId: string; quantity: number }[]
+    materials: [] as { materialId: string; quantity: number; borrowed?: boolean; borrowedDeadline?: string }[],
+    isPriority: false,
+    priorityExecutionDate: ''
   });
 
   const [selectedPhoto, setSelectedPhoto] = useState<File | null>(null);
@@ -58,6 +60,8 @@ export default function Demands() {
     data.append('clientNumber', formData.clientNumber || '');
     data.append('electricianIds', JSON.stringify(formData.electricianIds));
     data.append('materials', JSON.stringify(formData.materials));
+    data.append('isPriority', String(formData.isPriority));
+    data.append('priorityExecutionDate', formData.priorityExecutionDate || '');
     
     if (selectedPhoto) {
       data.append('photo', selectedPhoto);
@@ -157,7 +161,9 @@ export default function Demands() {
       description: '',
       clientNumber: '',
       electricianIds: [],
-      materials: []
+      materials: [],
+      isPriority: false,
+      priorityExecutionDate: ''
     });
   };
 
@@ -173,6 +179,8 @@ export default function Demands() {
       description: demand.description,
       clientNumber: demand.clientNumber || '',
       electricianIds: demand.electricians?.map((e: any) => e.id) || [],
+      isPriority: demand.isPriority || false,
+      priorityExecutionDate: demand.priorityExecutionDate ? formatLocalDate(demand.priorityExecutionDate, 'yyyy-MM-dd') : '',
       materials: demand.plannedMaterials?.map((pm: any) => ({
         materialId: pm.materialId,
         quantity: pm.quantity,
@@ -509,7 +517,15 @@ export default function Demands() {
                     {formatLocalDate(demand.date, 'dd/MM/yyyy')}
                   </td>
                   <td className="px-6 py-4">
-                    <div className="text-sm font-medium text-gray-900 group-hover:text-blue-600 transition-colors">{demand.location}</div>
+                    <div className="flex items-center gap-2 flex-wrap group-hover:text-blue-600 transition-colors">
+                      <span className="text-sm font-bold text-gray-900">{demand.location}</span>
+                      {demand.isPriority && (
+                        <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full text-[9px] font-black uppercase flex items-center gap-1 border border-amber-200 shrink-0 select-none">
+                          <Star className="h-2.5 w-2.5 fill-amber-500 text-amber-500" />
+                          Prioridade ({demand.priorityExecutionDate ? formatLocalDate(demand.priorityExecutionDate, 'dd/MM/yyyy') : ''})
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-gray-500 truncate max-w-xs">{demand.description}</div>
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-600">
@@ -729,6 +745,39 @@ export default function Demands() {
                 value={formData.clientNumber}
                 onChange={(e) => setFormData({...formData, clientNumber: e.target.value})}
               />
+            </div>
+
+            <div className="bg-amber-50/70 p-4 rounded-xl border border-amber-200 space-y-3 sm:col-span-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="rounded border-gray-300 text-amber-600 focus:ring-amber-500 h-4 w-4 cursor-pointer"
+                  checked={formData.isPriority}
+                  onChange={(e) => setFormData({...formData, isPriority: e.target.checked, priorityExecutionDate: e.target.checked ? formData.priorityExecutionDate : ''})}
+                />
+                <span className="text-sm font-bold text-amber-900 select-none flex items-center gap-1.5">
+                  <Star className={`h-4 w-4 text-amber-500 ${formData.isPriority ? 'fill-amber-500 animate-pulse' : ''}`} />
+                  Definir Demanda como Prioridade
+                </span>
+              </label>
+
+              {formData.isPriority && (
+                <div className="pl-6 space-y-2 animate-in fade-in slide-in-from-top-1">
+                  <label className="block text-xs font-semibold text-amber-800 mb-1">
+                    Data Programada para Execução <span className="text-red-600 font-bold">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    className="p-2 border border-amber-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    value={formData.priorityExecutionDate}
+                    onChange={(e) => setFormData({...formData, priorityExecutionDate: e.target.value})}
+                  />
+                  <p className="text-[10px] text-amber-700 font-medium">
+                    * Alertas de atenção serão exibidos no painel um dia antes e no mesmo dia da data programada.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 

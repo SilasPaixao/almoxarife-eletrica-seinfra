@@ -154,6 +154,13 @@ export class DemandController {
         dbDescription = `${dbDescription}###REF_PHOTO:${referencePhotoUrl}`;
       }
 
+      const isAdminUser = req.user?.role === 'ADMIN';
+      const isPriorityParam = req.body.isPriority;
+      const priorityExecutionDateParam = req.body.priorityExecutionDate;
+
+      const isPriority = isAdminUser && (isPriorityParam === true || isPriorityParam === 'true');
+      const priorityExecutionDate = isPriority && priorityExecutionDateParam ? parseDateAtNoon(priorityExecutionDateParam) : null;
+
       const demand = await prisma.demand.create({
         data: {
           date: parseDateAtNoon(date),
@@ -161,6 +168,8 @@ export class DemandController {
           location,
           googleMapsUrl,
           clientNumber,
+          isPriority,
+          priorityExecutionDate,
           electricians: {
             connect: (parsedElectricianIds || []).map((id: string) => ({ id }))
           },
@@ -201,7 +210,9 @@ export class DemandController {
         vehicles,
         tools,
         usedMaterials,
-        returnedMaterials
+        returnedMaterials,
+        isPriority,
+        priorityExecutionDate
       } = req.body;
 
       const isAdmin = req.user?.role === 'ADMIN';
@@ -286,6 +297,19 @@ export class DemandController {
         googleMapsUrl,
         clientNumber,
       };
+
+      if (isAdmin) {
+        if (isPriority !== undefined) {
+          updateData.isPriority = isPriority === true || isPriority === 'true';
+          if (!updateData.isPriority) {
+            updateData.priorityExecutionDate = null;
+          } else if (priorityExecutionDate !== undefined) {
+            updateData.priorityExecutionDate = priorityExecutionDate ? parseDateAtNoon(priorityExecutionDate) : null;
+          }
+        } else if (priorityExecutionDate !== undefined) {
+          updateData.priorityExecutionDate = priorityExecutionDate ? parseDateAtNoon(priorityExecutionDate) : null;
+        }
+      }
 
       if (parsedElectricianIds && isAdmin) {
         updateData.electricians = {

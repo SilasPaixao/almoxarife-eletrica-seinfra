@@ -65,7 +65,9 @@ export function OfflineProvider({ children }: { children: React.ReactNode }) {
         description: formData.description || '',
         clientNumber: formData.clientNumber || '',
         electricianIds: formData.electricianIds || [],
-        materials: formData.materials || []
+        materials: formData.materials || [],
+        isPriority: formData.isPriority || false,
+        priorityExecutionDate: formData.priorityExecutionDate || ''
       },
       photoBlob,
       photoName,
@@ -190,6 +192,12 @@ export function OfflineProvider({ children }: { children: React.ReactNode }) {
         data.append('clientNumber', demand.formData.clientNumber || '');
         data.append('electricianIds', JSON.stringify(demand.formData.electricianIds));
         data.append('materials', JSON.stringify(demand.formData.materials));
+        if (demand.formData.isPriority !== undefined) {
+          data.append('isPriority', String(demand.formData.isPriority));
+        }
+        if (demand.formData.priorityExecutionDate !== undefined) {
+          data.append('priorityExecutionDate', demand.formData.priorityExecutionDate || '');
+        }
 
         if (demand.photoBlob && demand.photoName && demand.photoType) {
           const file = new File([demand.photoBlob], demand.photoName, { type: demand.photoType });

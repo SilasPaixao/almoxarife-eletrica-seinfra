@@ -84,6 +84,9 @@ model Demand {
   vehicles             String[]       // Array of strings for simplicity as per requirement
   tools                String[]       // Array of strings for tools used
   
+  isPriority           Boolean        @default(false)
+  priorityExecutionDate DateTime?
+  
   plannedMaterials     DemandMaterial[]
   usedMaterials        UsedMaterial[]
   returnedMaterials    ReturnedMaterial[]

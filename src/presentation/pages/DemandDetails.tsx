@@ -23,7 +23,9 @@ import {
   Trash2,
   Search,
   ClipboardList,
-  ExternalLink
+  ExternalLink,
+  Star,
+  Clock
 } from 'lucide-react';
 import { formatLocalDate } from '../utils/date.ts';
 import { ptBR } from 'date-fns/locale';
@@ -78,14 +80,16 @@ export default function DemandDetails() {
     description: '',
     clientNumber: '',
     electricianIds: [] as string[],
-    materials: [] as { materialId: string; quantity: number }[],
+    materials: [] as { materialId: string; quantity: number; borrowed?: boolean; borrowedDeadline?: string }[],
     transformerNumber: '',
     observation: '',
     vehicles: [] as string[],
     tools: [] as string[],
     usedMaterials: [] as { materialId: string; quantity: number }[],
     returnedMaterials: [] as { materialId: string; quantity: number }[],
-    recoveredMaterials: [] as { materialId: string; quantity: number }[]
+    recoveredMaterials: [] as { materialId: string; quantity: number }[],
+    isPriority: false,
+    priorityExecutionDate: ''
   });
   const [materialSearch, setMaterialSearch] = useState('');
   const [showMaterialResults, setShowMaterialResults] = useState(false);
@@ -640,9 +644,13 @@ export default function DemandDetails() {
       description: demand.description,
       clientNumber: demand.clientNumber || '',
       electricianIds: demand.electricians?.map((e: any) => e.id) || [],
+      isPriority: demand.isPriority || false,
+      priorityExecutionDate: demand.priorityExecutionDate ? formatLocalDate(demand.priorityExecutionDate, 'yyyy-MM-dd') : '',
       materials: demand.plannedMaterials?.map((pm: any) => ({
         materialId: pm.materialId,
-        quantity: pm.quantity
+        quantity: pm.quantity,
+        borrowed: pm.borrowed || false,
+        borrowedDeadline: pm.borrowedDeadline ? formatLocalDate(pm.borrowedDeadline, 'yyyy-MM-dd') : ''
       })) || [],
       transformerNumber: demand.transformerNumber || '',
       observation: demand.observation || '',
@@ -671,7 +679,7 @@ export default function DemandDetails() {
     if (editFormData.materials.find(m => m.materialId === materialId)) return;
     setEditFormData({
       ...editFormData,
-      materials: [...editFormData.materials, { materialId, quantity: 1 }]
+      materials: [...editFormData.materials, { materialId, quantity: 1, borrowed: false, borrowedDeadline: '' }]
     });
   };
 
@@ -749,6 +757,19 @@ export default function DemandDetails() {
         {/* Detail Card */}
         <div className="lg:col-span-1 space-y-6">
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            {demand.isPriority && (
+              <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2 text-amber-900 shadow-sm animate-pulse">
+                <Star className="h-5 w-5 fill-amber-500 text-amber-500 shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-xs font-black uppercase tracking-wider">Demanda Prioritária</div>
+                  <div className="text-sm font-semibold mt-0.5">
+                    {demand.priorityExecutionDate 
+                      ? `Execução recomendada: ${formatLocalDate(demand.priorityExecutionDate, 'dd/MM/yyyy')}`
+                      : 'Sem data de execução definida.'}
+                  </div>
+                </div>
+              </div>
+            )}
             <h2 className="text-xl font-bold text-gray-900 mb-1">{demand.location}</h2>
             
             {demand.googleMapsUrl ? (
@@ -1535,6 +1556,41 @@ export default function DemandDetails() {
                   onChange={(e) => user?.role === 'ADMIN' && setEditFormData({...editFormData, clientNumber: e.target.value})}
                 />
               </div>
+
+              {user?.role === 'ADMIN' && (
+                <div className="bg-amber-50/70 p-4 rounded-xl border border-amber-200 space-y-3 md:col-span-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="rounded border-gray-300 text-amber-600 focus:ring-amber-500 h-4 w-4 cursor-pointer"
+                      checked={editFormData.isPriority}
+                      onChange={(e) => setEditFormData({...editFormData, isPriority: e.target.checked, priorityExecutionDate: e.target.checked ? editFormData.priorityExecutionDate : ''})}
+                    />
+                    <span className="text-sm font-bold text-amber-900 select-none flex items-center gap-1.5">
+                      <Star className={`h-4 w-4 text-amber-500 ${editFormData.isPriority ? 'fill-amber-500 animate-pulse' : ''}`} />
+                      Definir Demanda como Prioridade
+                    </span>
+                  </label>
+
+                  {editFormData.isPriority && (
+                    <div className="pl-6 space-y-2 animate-in fade-in slide-in-from-top-1">
+                      <label className="block text-xs font-semibold text-amber-800 mb-1">
+                        Data Programada para Execução <span className="text-red-600 font-bold">*</span>
+                      </label>
+                      <input
+                        type="date"
+                        required
+                        className="p-2 border border-amber-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        value={editFormData.priorityExecutionDate}
+                        onChange={(e) => setEditFormData({...editFormData, priorityExecutionDate: e.target.value})}
+                      />
+                      <p className="text-[10px] text-amber-700 font-medium">
+                        * Alertas de atenção serão exibidos no painel um dia antes e no mesmo dia da data programada.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="border-t pt-4 space-y-6">
@@ -1582,9 +1638,31 @@ export default function DemandDetails() {
                     {editFormData.materials.map((m) => {
                       const material = materials?.find((mat: any) => mat.id === m.materialId);
                       return (
-                        <div key={m.materialId} className="flex items-center justify-between bg-gray-50 p-2 rounded-lg border border-gray-200">
+                        <div key={m.materialId} className="flex items-center justify-between bg-gray-50 p-2.5 rounded-lg border border-gray-200 gap-4">
                           <span className="text-sm font-medium text-gray-700">{material?.name}</span>
                           <div className="flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditFormData({
+                                  ...editFormData,
+                                  materials: editFormData.materials.map(mat => 
+                                    mat.materialId === m.materialId 
+                                      ? { ...mat, borrowed: !mat.borrowed } 
+                                      : mat
+                                  )
+                                });
+                              }}
+                              className={`px-2 py-1 text-xs font-bold rounded-lg border transition-all flex items-center gap-1 shrink-0 cursor-pointer ${
+                                m.borrowed 
+                                  ? 'bg-amber-100 border-amber-300 text-amber-800' 
+                                  : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-700'
+                              }`}
+                              title="Marcar material como emprestado"
+                            >
+                              <Clock className="h-3 w-3" />
+                              <span>{m.borrowed ? 'Emprestado' : 'Empréstimo?'}</span>
+                            </button>
                             <input
                               type="number"
                               min="1"

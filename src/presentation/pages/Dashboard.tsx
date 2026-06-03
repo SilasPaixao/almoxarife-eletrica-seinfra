@@ -3,7 +3,7 @@ import Layout from '../components/Layout.tsx';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import api from '../services/api.ts';
-import { ClipboardList, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
+import { ClipboardList, CheckCircle, Clock, AlertTriangle, Star } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { ptBR } from 'date-fns/locale';
 import { parseUTCDate, formatLocalDate } from '../utils/date.ts';
@@ -47,12 +47,84 @@ export default function Dashboard() {
     return d.status === activeTab;
   });
 
+  const isAdmin = user?.role === 'ADMIN';
+
+  // Find priority alert demands for admins
+  const priorityAlerts = demands?.filter((d: any) => {
+    if (!d.isPriority || !d.priorityExecutionDate || d.status === 'CONCLUDED') return false;
+
+    const executionDate = parseUTCDate(d.priorityExecutionDate);
+    const today = new Date();
+    const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const diffMs = executionDate.getTime() - todayMidnight.getTime();
+    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+    return diffDays === 0 || diffDays === 1;
+  }).map((d: any) => {
+    const executionDate = parseUTCDate(d.priorityExecutionDate);
+    const today = new Date();
+    const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const diffMs = executionDate.getTime() - todayMidnight.getTime();
+    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+    return {
+      ...d,
+      alertDays: diffDays
+    };
+  }) || [];
+
   return (
     <Layout>
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900">Olá, {user?.name}</h1>
         <p className="text-gray-600">Bem-vindo ao sistema de gestão do almoxarifado.</p>
       </div>
+
+      {/* Alert Banner for Priority Demands (Admins Only) */}
+      {isAdmin && priorityAlerts.length > 0 && (
+        <div className="mb-6 space-y-3">
+          {priorityAlerts.map((alert: any) => (
+            <div 
+              key={alert.id} 
+              className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm transition-all animate-in fade-in-50 duration-300 ${
+                alert.alertDays === 0 
+                  ? 'bg-rose-50 border-rose-200 text-rose-900' 
+                  : 'bg-amber-50 border-amber-200 text-amber-900'
+              }`}
+            >
+              <div className="flex items-start gap-4">
+                <div className={`p-2 rounded-lg shrink-0 ${alert.alertDays === 0 ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-600'}`}>
+                  <AlertTriangle className="h-5 w-5 animate-pulse" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-extrabold text-xs tracking-wider uppercase">
+                      {alert.alertDays === 0 ? '⚠️ ATENÇÃO: EXECUÇÃO HOJE' : '⏰ ATENÇÃO: AMANHÃ'}
+                    </span>
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase ${
+                      alert.alertDays === 0 ? 'bg-rose-200 text-rose-800' : 'bg-amber-200 text-amber-800'
+                    }`}>
+                      Prioridade Máxima
+                    </span>
+                  </div>
+                  <h4 className="font-bold text-sm mt-1">{alert.location}</h4>
+                  <p className="text-xs opacity-90 line-clamp-1 mt-0.5">{alert.description}</p>
+                </div>
+              </div>
+              <Link 
+                to={`/demands/${alert.id}`} 
+                className={`py-1.5 px-3 rounded-lg text-xs font-bold transition-all shadow-sm shrink-0 self-start sm:self-center text-center ${
+                  alert.alertDays === 0 
+                    ? 'bg-rose-600 hover:bg-rose-700 text-white' 
+                    : 'bg-amber-600 hover:bg-amber-700 text-white'
+                }`}
+              >
+                Acessar Demanda
+              </Link>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         {stats.map((stat) => (
@@ -116,7 +188,15 @@ export default function Dashboard() {
                 >
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div>
-                      <h3 className="font-bold text-gray-900">{demand.location}</h3>
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <h3 className="font-bold text-gray-900">{demand.location}</h3>
+                        {demand.isPriority && (
+                          <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full text-[10px] font-black uppercase flex items-center gap-1 border border-amber-200 shrink-0">
+                            <Star className="h-2.5 w-2.5 fill-amber-500 text-amber-500" />
+                            Prioritária ({demand.priorityExecutionDate ? formatLocalDate(demand.priorityExecutionDate, 'dd/MM/yyyy') : ''})
+                          </span>
+                        )}
+                      </div>
                       <p className="text-gray-600 text-sm line-clamp-1">{demand.description}</p>
                       <div className="flex items-center mt-2 text-xs text-gray-500 space-x-4">
                         <span className="flex items-center">
