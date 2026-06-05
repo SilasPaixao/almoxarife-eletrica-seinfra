@@ -1,9 +1,9 @@
 import { useAuth } from '../context/AuthContext.tsx';
 import Layout from '../components/Layout.tsx';
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import api from '../services/api.ts';
-import { ClipboardList, CheckCircle, Clock, AlertTriangle, Star } from 'lucide-react';
+import { ClipboardList, CheckCircle, Clock, AlertTriangle, Star, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { ptBR } from 'date-fns/locale';
 import { parseUTCDate, formatLocalDate } from '../utils/date.ts';
@@ -73,6 +73,25 @@ export default function Dashboard() {
     };
   }) || [];
 
+  const [currentAlertIndex, setCurrentAlertIndex] = useState(0);
+  const [isHovered, setIsHovered] = useState(false);
+
+  useEffect(() => {
+    if (currentAlertIndex >= priorityAlerts.length) {
+      setCurrentAlertIndex(0);
+    }
+  }, [priorityAlerts.length, currentAlertIndex]);
+
+  useEffect(() => {
+    if (priorityAlerts.length <= 1 || isHovered) return;
+
+    const interval = setInterval(() => {
+      setCurrentAlertIndex((prev) => (prev + 1) % priorityAlerts.length);
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [priorityAlerts.length, isHovered]);
+
   return (
     <Layout>
       <div className="mb-8">
@@ -82,47 +101,141 @@ export default function Dashboard() {
 
       {/* Alert Banner for Priority Demands (Admins Only) */}
       {isAdmin && priorityAlerts.length > 0 && (
-        <div className="mb-6 space-y-3">
-          {priorityAlerts.map((alert: any) => (
-            <div 
-              key={alert.id} 
-              className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm transition-all animate-in fade-in-50 duration-300 ${
-                alert.alertDays === 0 
-                  ? 'bg-rose-50 border-rose-200 text-rose-900' 
-                  : 'bg-amber-50 border-amber-200 text-amber-900'
-              }`}
-            >
-              <div className="flex items-start gap-4">
-                <div className={`p-2 rounded-lg shrink-0 ${alert.alertDays === 0 ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-600'}`}>
-                  <AlertTriangle className="h-5 w-5 animate-pulse" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-extrabold text-xs tracking-wider uppercase">
-                      {alert.alertDays === 0 ? '⚠️ ATENÇÃO: EXECUÇÃO HOJE' : '⏰ ATENÇÃO: AMANHÃ'}
-                    </span>
-                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase ${
-                      alert.alertDays === 0 ? 'bg-rose-200 text-rose-800' : 'bg-amber-200 text-amber-800'
-                    }`}>
-                      Prioridade Máxima
-                    </span>
+        <div className="mb-6">
+          {priorityAlerts.length === 1 ? (
+            // Single priority alert (no carousel needed)
+            (() => {
+              const alert = priorityAlerts[0];
+              const isToday = alert.alertDays === 0;
+              const bgColor = isToday ? 'bg-rose-50 border-rose-200 text-rose-900' : 'bg-amber-50 border-amber-200 text-amber-900';
+              const iconBg = isToday ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-600';
+              const btnColor = isToday ? 'bg-rose-600 hover:bg-rose-700 text-white' : 'bg-amber-600 hover:bg-amber-700 text-white';
+              const badgeColor = isToday ? 'bg-rose-200 text-rose-800' : 'bg-amber-200 text-amber-800';
+
+              return (
+                <div 
+                  key={alert.id} 
+                  className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm transition-all animate-in fade-in-50 duration-300 ${bgColor}`}
+                >
+                  <div className="flex items-start gap-4">
+                    <div className={`p-2 rounded-lg shrink-0 ${iconBg}`}>
+                      <AlertTriangle className="h-5 w-5 animate-pulse" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-extrabold text-xs tracking-wider uppercase">
+                          {isToday ? '⚠️ ATENÇÃO: EXECUÇÃO HOJE' : '⏰ ATENÇÃO: AMANHÃ'}
+                        </span>
+                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase ${badgeColor}`}>
+                          Prioridade Máxima
+                        </span>
+                      </div>
+                      <h4 className="font-bold text-sm mt-1">{alert.location}</h4>
+                      <p className="text-xs opacity-90 line-clamp-1 mt-0.5">{alert.description}</p>
+                    </div>
                   </div>
-                  <h4 className="font-bold text-sm mt-1">{alert.location}</h4>
-                  <p className="text-xs opacity-90 line-clamp-1 mt-0.5">{alert.description}</p>
+                  <Link 
+                    to={`/demands/${alert.id}`} 
+                    className={`py-1.5 px-3 rounded-lg text-xs font-bold transition-all shadow-sm shrink-0 self-start sm:self-center text-center cursor-pointer ${btnColor}`}
+                  >
+                    Acessar Demanda
+                  </Link>
                 </div>
-              </div>
-              <Link 
-                to={`/demands/${alert.id}`} 
-                className={`py-1.5 px-3 rounded-lg text-xs font-bold transition-all shadow-sm shrink-0 self-start sm:self-center text-center ${
-                  alert.alertDays === 0 
-                    ? 'bg-rose-600 hover:bg-rose-700 text-white' 
-                    : 'bg-amber-600 hover:bg-amber-700 text-white'
-                }`}
-              >
-                Acessar Demanda
-              </Link>
-            </div>
-          ))}
+              );
+            })()
+          ) : (
+            // Carousel for Multiple Priority Alerts
+            (() => {
+              const activeIndex = currentAlertIndex >= priorityAlerts.length ? 0 : currentAlertIndex;
+              const alert = priorityAlerts[activeIndex];
+              const isToday = alert.alertDays === 0;
+              const bgColor = isToday ? 'bg-rose-50 border-rose-200 text-rose-900 animate-in fade-in-50 duration-500' : 'bg-amber-50 border-amber-200 text-amber-900 animate-in fade-in-50 duration-500';
+              const iconBg = isToday ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-600';
+              const btnColor = isToday ? 'bg-rose-600 hover:bg-rose-700 text-white' : 'bg-amber-600 hover:bg-amber-700 text-white';
+              const badgeColor = isToday ? 'bg-rose-200 text-rose-800' : 'bg-amber-200 text-amber-800';
+              const controlHoverBg = isToday ? 'hover:bg-rose-100/85 text-rose-700' : 'hover:bg-amber-100/85 text-amber-700';
+
+              return (
+                <div 
+                  className={`p-4 rounded-xl border flex flex-col gap-3 shadow-md relative group/carousel transition-all duration-300 min-h-[140px] sm:min-h-[100px] overflow-hidden ${bgColor}`}
+                  onMouseEnter={() => setIsHovered(true)}
+                  onMouseLeave={() => setIsHovered(false)}
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pr-20 sm:pr-24">
+                    <div className="flex items-start gap-4">
+                      {/* Icon */}
+                      <div className={`p-2 rounded-lg shrink-0 ${iconBg}`}>
+                        <AlertTriangle className="h-5 w-5 animate-pulse" />
+                      </div>
+                      
+                      {/* Content (keyed to animate transition) */}
+                      <div key={alert.id} className="animate-in fade-in slide-in-from-right-2 duration-300">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-extrabold text-[11px] tracking-wider uppercase">
+                            {isToday ? '⚠️ ATENÇÃO: EXECUÇÃO HOJE' : '⏰ ATENÇÃO: AMANHÃ'}
+                          </span>
+                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase ${badgeColor}`}>
+                            Prioritária ({activeIndex + 1}/{priorityAlerts.length})
+                          </span>
+                        </div>
+                        <h4 className="font-bold text-sm mt-1">{alert.location}</h4>
+                        <p className="text-xs opacity-90 line-clamp-1 mt-0.5">{alert.description}</p>
+                      </div>
+                    </div>
+
+                    {/* CTA link */}
+                    <Link 
+                      to={`/demands/${alert.id}`} 
+                      className={`py-1.5 px-3 rounded-lg text-xs font-bold transition-all shadow-sm shrink-0 self-start sm:self-center text-center cursor-pointer ${btnColor}`}
+                    >
+                      Acessar Demanda
+                    </Link>
+                  </div>
+
+                  {/* Manual Controls */}
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-white/60 hover:bg-white/90 transition-all border border-black/5 p-1 rounded-lg shadow-sm">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCurrentAlertIndex((prev) => (prev - 1 + priorityAlerts.length) % priorityAlerts.length);
+                      }}
+                      className={`p-1 rounded-md transition-colors cursor-pointer ${controlHoverBg}`}
+                      title="Slide Anterior"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCurrentAlertIndex((prev) => (prev + 1) % priorityAlerts.length);
+                      }}
+                      className={`p-1 rounded-md transition-colors cursor-pointer ${controlHoverBg}`}
+                      title="Próximo Slide"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {/* Dot Indicators */}
+                  <div className="flex justify-center items-center gap-1.5 mt-1.5 border-t border-black/[0.03] pt-2">
+                    {priorityAlerts.map((_, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setCurrentAlertIndex(idx)}
+                        className={`h-1.5 rounded-full transition-all duration-300 cursor-pointer ${
+                          idx === activeIndex 
+                            ? (isToday ? 'w-4 bg-rose-600' : 'w-4 bg-amber-600') 
+                            : (isToday ? 'w-1.5 bg-rose-200/80 hover:bg-rose-300' : 'w-1.5 bg-amber-200/80 hover:bg-amber-300')
+                        }`}
+                        title={`Mostrar item ${idx + 1}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })()
+          )}
         </div>
       )}
 

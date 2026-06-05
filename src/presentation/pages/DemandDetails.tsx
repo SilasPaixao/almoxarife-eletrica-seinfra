@@ -25,7 +25,8 @@ import {
   ClipboardList,
   ExternalLink,
   Star,
-  Clock
+  Clock,
+  Share2
 } from 'lucide-react';
 import { formatLocalDate } from '../utils/date.ts';
 import { ptBR } from 'date-fns/locale';
@@ -605,6 +606,67 @@ export default function DemandDetails() {
     }
   };
 
+  const handleWhatsAppShare = async () => {
+    if (!demand) return;
+
+    const electriciansNames = demand.electricians && demand.electricians.length > 0
+      ? demand.electricians.map((e: any) => e.name).join(', ')
+      : 'Não especificado';
+
+    const photosList = demand.photoUrl ? demand.photoUrl.split(',') : [];
+
+    let message = `*DEMANDA EXECUTADA E APROVADA* ✅\n\n`;
+    message += `📍 *Local:* ${demand.location || 'Não informado'}\n`;
+    message += `📝 *Descrição:* ${demand.description || 'Sem descrição'}\n`;
+    message += `🧑‍🔧 *Eletricista(s) executor(es):* ${electriciansNames}\n\n`;
+
+    // Try sharing via Web Share API if supported and has images to attach directly
+    if (photosList.length > 0 && navigator.share && navigator.canShare) {
+      try {
+        const filePromises = photosList.map(async (url, idx) => {
+          const trimmedUrl = url.trim();
+          const absoluteUrl = trimmedUrl.startsWith('http') 
+            ? trimmedUrl 
+            : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
+          const res = await fetch(absoluteUrl);
+          const blob = await res.blob();
+          const ext = trimmedUrl.split('.').pop()?.split('?')[0] || 'jpg';
+          const cleanExt = ['jpg', 'jpeg', 'png', 'webp'].includes(ext.toLowerCase()) ? ext.toLowerCase() : 'jpg';
+          return new File([blob], `foto_demanda_${idx + 1}.${cleanExt}`, { type: blob.type || `image/${cleanExt}` });
+        });
+
+        const files = await Promise.all(filePromises);
+
+        if (navigator.canShare({ files })) {
+          await navigator.share({
+            files,
+            title: 'Demanda Executada e Aprovada',
+            text: message
+          });
+          return;
+        }
+      } catch (err) {
+        console.error('Falha ao compartilhar via Web Share API, usando link do WhatsApp:', err);
+      }
+    }
+
+    if (photosList.length > 0) {
+      message += `📸 *Fotos do Serviço Executado:*\n`;
+      photosList.forEach((url: string, index: number) => {
+        const trimmedUrl = url.trim();
+        const absoluteUrl = trimmedUrl.startsWith('http') 
+          ? trimmedUrl 
+          : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
+        message += `${index + 1}️⃣ ${absoluteUrl}\n`;
+      });
+    } else {
+      message += `⚠️ Nenhuma foto registrada.\n`;
+    }
+
+    const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
+    window.open(whatsappUrl, '_blank');
+  };
+
   const handleEditClick = () => {
     if (!demand) return;
 
@@ -853,7 +915,19 @@ export default function DemandDetails() {
             const photosList = demand.photoUrl ? demand.photoUrl.split(',') : [];
             return (
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-4">
-                <h3 className="text-sm font-bold text-gray-800 uppercase">Fotos do Serviço</h3>
+                <div className="flex items-center justify-between gap-4 pb-2 border-b border-gray-100 flex-wrap">
+                  <h3 className="text-sm font-bold text-gray-800 uppercase">Fotos do Serviço</h3>
+                  {user?.role === 'ADMIN' && (
+                    <button
+                      type="button"
+                      onClick={handleWhatsAppShare}
+                      className="inline-flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-110 hover:shadow-md text-emerald-800 px-3 py-1.5 rounded-xl text-xs font-black transition-all border border-emerald-200 cursor-pointer shadow-sm select-none"
+                    >
+                      <Share2 className="h-3.5 w-3.5 text-emerald-600" />
+                      Compartilhar Fotos (WhatsApp)
+                    </button>
+                  )}
+                </div>
                 {photosList.length === 1 ? (
                   <a 
                     href={photosList[0]} 

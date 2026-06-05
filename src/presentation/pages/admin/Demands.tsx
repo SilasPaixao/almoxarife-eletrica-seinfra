@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Layout from '../../components/Layout.tsx';
 import Modal from '../../components/Modal.tsx';
 import api from '../../services/api.ts';
-import { Plus, Search, FileDown, Upload, X, Loader2, Calendar, MapPin, User, ClipboardList, Trash2, Package, Pencil, ExternalLink, Camera, Clock, Star, AlertTriangle } from 'lucide-react';
+import { Plus, Search, FileDown, Upload, X, Loader2, Calendar, MapPin, User, ClipboardList, Trash2, Package, Pencil, ExternalLink, Camera, Clock, Star, AlertTriangle, Share2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { CheckCircle, AlertCircle } from 'lucide-react';
@@ -165,6 +165,67 @@ export default function Demands() {
       isPriority: false,
       priorityExecutionDate: ''
     });
+  };
+
+  const handleWhatsAppShare = async (demand: any) => {
+    if (!demand) return;
+
+    const electriciansNames = demand.electricians && demand.electricians.length > 0
+      ? demand.electricians.map((e: any) => e.name).join(', ')
+      : 'Não especificado';
+
+    const photosList = demand.photoUrl ? demand.photoUrl.split(',') : [];
+
+    let message = `*DEMANDA EXECUTADA E APROVADA* ✅\n\n`;
+    message += `📍 *Local:* ${demand.location || 'Não informado'}\n`;
+    message += `📝 *Descrição:* ${demand.description || 'Sem descrição'}\n`;
+    message += `🧑‍🔧 *Eletricista(s) executor(es):* ${electriciansNames}\n\n`;
+
+    // Try sharing via Web Share API if supported and has images to attach directly
+    if (photosList.length > 0 && navigator.share && navigator.canShare) {
+      try {
+        const filePromises = photosList.map(async (url, idx) => {
+          const trimmedUrl = url.trim();
+          const absoluteUrl = trimmedUrl.startsWith('http') 
+            ? trimmedUrl 
+            : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
+          const res = await fetch(absoluteUrl);
+          const blob = await res.blob();
+          const ext = trimmedUrl.split('.').pop()?.split('?')[0] || 'jpg';
+          const cleanExt = ['jpg', 'jpeg', 'png', 'webp'].includes(ext.toLowerCase()) ? ext.toLowerCase() : 'jpg';
+          return new File([blob], `foto_demanda_${idx + 1}.${cleanExt}`, { type: blob.type || `image/${cleanExt}` });
+        });
+
+        const files = await Promise.all(filePromises);
+
+        if (navigator.canShare({ files })) {
+          await navigator.share({
+            files,
+            title: 'Demanda Executada e Aprovada',
+            text: message
+          });
+          return;
+        }
+      } catch (err) {
+        console.error('Falha ao compartilhar via Web Share API, usando link do WhatsApp:', err);
+      }
+    }
+
+    if (photosList.length > 0) {
+      message += `📸 *Fotos do Serviço Executado:*\n`;
+      photosList.forEach((url: string, index: number) => {
+        const trimmedUrl = url.trim();
+        const absoluteUrl = trimmedUrl.startsWith('http') 
+          ? trimmedUrl 
+          : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
+        message += `${index + 1}️⃣ ${absoluteUrl}\n`;
+      });
+    } else {
+      message += `⚠️ Nenhuma foto registrada.\n`;
+    }
+
+    const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
+    window.open(whatsappUrl, '_blank');
   };
 
   const handleEditDemand = (demand: any) => {
@@ -563,6 +624,16 @@ export default function Demands() {
                         >
                           <Package className="h-4 w-4 text-amber-500" />
                           <span className="hidden md:inline">Entregar</span>
+                        </button>
+                      )}
+                      {((demand.status === 'CONCLUDED' || demand.status === 'PENDING_APPROVAL') && demand.photoUrl) && (
+                        <button
+                          onClick={() => handleWhatsAppShare(demand)}
+                          className="text-emerald-600 hover:text-emerald-800 flex items-center gap-1 text-xs font-bold"
+                          title="Compartilhar no WhatsApp"
+                        >
+                          <Share2 className="h-4 w-4" />
+                          <span className="hidden lg:inline">Compartilhar</span>
                         </button>
                       )}
                       <button 
