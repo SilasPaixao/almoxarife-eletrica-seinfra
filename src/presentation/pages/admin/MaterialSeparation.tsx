@@ -296,9 +296,9 @@ export default function MaterialSeparation() {
           <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-4 text-sm text-blue-800 flex items-start gap-3">
             <Info className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
             <div>
-              <p className="font-semibold">Como funciona a separação consolidada?</p>
+              <p className="font-semibold">Como funciona a separação?</p>
               <p className="text-gray-600 text-xs mt-0.5">
-                Selecione uma dupla/equipe abaixo para compilar todos os materiais planejados de suas demandas pendentes de execução. O sistema soma as quantidades de cada item para gerar uma folha de separação consolidada.
+                Selecione uma dupla/equipe abaixo para juntar todos os materiais planejados de suas demandas pendentes de execução. O sistema soma as quantidades de cada item para gerar uma folha de separação.
               </p>
             </div>
           </div>

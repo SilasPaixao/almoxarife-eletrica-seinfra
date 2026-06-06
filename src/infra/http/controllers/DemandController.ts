@@ -695,6 +695,34 @@ export class DemandController {
     }
   }
 
+  static async revertDeliverMaterials(req: AuthRequest, res: Response) {
+    try {
+      const { id } = req.params;
+      
+      if (req.user?.role !== 'ADMIN') {
+        return res.status(403).json({ error: 'Apenas administradores podem reverter entrega de materiais.' });
+      }
+
+      await prisma.$transaction(async (tx) => {
+        // Mark as materials NOT delivered
+        await tx.demand.update({
+          where: { id },
+          data: { materialsDelivered: false }
+        });
+
+        // Compute and delete initial NOT_USED entries
+        await recalculateNotUsedReturns(id, tx);
+      });
+
+      await AuditService.log('UPDATE', 'DEMAND_MATERIALS_REVERTED', req.user!.id, id, { materialsDelivered: false });
+
+      res.json({ message: 'Entrega dos materiais revertida com sucesso!' });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: 'Erro ao reverter entrega dos materiais.' });
+    }
+  }
+
   static async toggleExcludeSeparation(req: AuthRequest, res: Response) {
     try {
       const { id } = req.params;

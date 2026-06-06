@@ -64,6 +64,7 @@ export default function DemandDetails() {
   const [trafo, setTrafo] = useState('');
   const [obs, setObs] = useState('');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+  const [isSharing, setIsSharing] = useState(false);
 
   // Material Autocomplete States for Completion Form
   const [usedMaterialSearch, setUsedMaterialSearch] = useState('');
@@ -459,6 +460,34 @@ export default function DemandDetails() {
     }
   });
 
+  const deliverMaterialsMutation = useMutation({
+    mutationFn: async () => await api.put(`/demands/${id}/deliver-materials`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['demands'] });
+      queryClient.invalidateQueries({ queryKey: ['demand', id] });
+      setFeedback({ type: 'success', message: 'Materiais marcados como entregues com sucesso!' });
+      setTimeout(() => setFeedback(null), 3000);
+    },
+    onError: (error: any) => {
+      setFeedback({ type: 'error', message: 'Erro ao marcar materiais como entregues.' });
+      setTimeout(() => setFeedback(null), 5000);
+    }
+  });
+
+  const revertMaterialsMutation = useMutation({
+    mutationFn: async () => await api.put(`/demands/${id}/revert-deliver-materials`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['demands'] });
+      queryClient.invalidateQueries({ queryKey: ['demand', id] });
+      setFeedback({ type: 'success', message: 'Entrega dos materiais revertida com sucesso!' });
+      setTimeout(() => setFeedback(null), 3000);
+    },
+    onError: (error: any) => {
+      setFeedback({ type: 'error', message: 'Erro ao reverter entrega dos materiais.' });
+      setTimeout(() => setFeedback(null), 5000);
+    }
+  });
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -607,64 +636,63 @@ export default function DemandDetails() {
   };
 
   const handleWhatsAppShare = async () => {
-    if (!demand) return;
+    if (!demand || isSharing) return;
+    setIsSharing(true);
 
-    const electriciansNames = demand.electricians && demand.electricians.length > 0
-      ? demand.electricians.map((e: any) => e.name).join(', ')
-      : 'Não especificado';
+    try {
+      const photosList = demand.photoUrl ? demand.photoUrl.split(',') : [];
 
-    const photosList = demand.photoUrl ? demand.photoUrl.split(',') : [];
+      let message = `*DEMANDA EXECUTADA E APROVADA* ✅\n\n`;
+      message += `📍 *Local:* ${demand.location || 'Não informado'}\n\n`;
 
-    let message = `*DEMANDA EXECUTADA E APROVADA* ✅\n\n`;
-    message += `📍 *Local:* ${demand.location || 'Não informado'}\n`;
-    message += `📝 *Descrição:* ${demand.description || 'Sem descrição'}\n`;
-    message += `🧑‍🔧 *Eletricista(s) executor(es):* ${electriciansNames}\n\n`;
+      // Try sharing via Web Share API if supported and has images to attach directly
+      if (photosList.length > 0 && navigator.share && navigator.canShare) {
+        try {
+          const filePromises = photosList.map(async (url, idx) => {
+            const trimmedUrl = url.trim();
+            const absoluteUrl = trimmedUrl.startsWith('http') 
+              ? trimmedUrl 
+              : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
+            const res = await fetch(absoluteUrl);
+            const blob = await res.blob();
+            const ext = trimmedUrl.split('.').pop()?.split('?')[0] || 'jpg';
+            const cleanExt = ['jpg', 'jpeg', 'png', 'webp'].includes(ext.toLowerCase()) ? ext.toLowerCase() : 'jpg';
+            return new File([blob], `foto_demanda_${idx + 1}.${cleanExt}`, { type: blob.type || `image/${cleanExt}` });
+          });
 
-    // Try sharing via Web Share API if supported and has images to attach directly
-    if (photosList.length > 0 && navigator.share && navigator.canShare) {
-      try {
-        const filePromises = photosList.map(async (url, idx) => {
+          const files = await Promise.all(filePromises);
+
+          if (navigator.canShare({ files })) {
+            await navigator.share({
+              files,
+              title: 'Demanda Executada e Aprovada',
+              text: message
+            });
+            return;
+          }
+        } catch (err) {
+          console.warn('Falha amigável/cancelamento via Web Share API, usando link do WhatsApp:', err);
+        }
+      }
+
+      if (photosList.length > 0) {
+        message += `📸 *Fotos do Serviço Executado:*\n`;
+        photosList.forEach((url: string, index: number) => {
           const trimmedUrl = url.trim();
           const absoluteUrl = trimmedUrl.startsWith('http') 
             ? trimmedUrl 
             : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
-          const res = await fetch(absoluteUrl);
-          const blob = await res.blob();
-          const ext = trimmedUrl.split('.').pop()?.split('?')[0] || 'jpg';
-          const cleanExt = ['jpg', 'jpeg', 'png', 'webp'].includes(ext.toLowerCase()) ? ext.toLowerCase() : 'jpg';
-          return new File([blob], `foto_demanda_${idx + 1}.${cleanExt}`, { type: blob.type || `image/${cleanExt}` });
+          message += `${index + 1}️⃣ ${absoluteUrl}\n`;
         });
-
-        const files = await Promise.all(filePromises);
-
-        if (navigator.canShare({ files })) {
-          await navigator.share({
-            files,
-            title: 'Demanda Executada e Aprovada',
-            text: message
-          });
-          return;
-        }
-      } catch (err) {
-        console.error('Falha ao compartilhar via Web Share API, usando link do WhatsApp:', err);
+      } else {
+        message += `⚠️ Nenhuma foto registrada.\n`;
       }
-    }
 
-    if (photosList.length > 0) {
-      message += `📸 *Fotos do Serviço Executado:*\n`;
-      photosList.forEach((url: string, index: number) => {
-        const trimmedUrl = url.trim();
-        const absoluteUrl = trimmedUrl.startsWith('http') 
-          ? trimmedUrl 
-          : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
-        message += `${index + 1}️⃣ ${absoluteUrl}\n`;
-      });
-    } else {
-      message += `⚠️ Nenhuma foto registrada.\n`;
+      const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
+      window.open(whatsappUrl, '_blank');
+    } finally {
+      setIsSharing(false);
     }
-
-    const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
-    window.open(whatsappUrl, '_blank');
   };
 
   const handleEditClick = () => {
@@ -909,6 +937,58 @@ export default function DemandDetails() {
                 ))}
               </ul>
             </div>
+
+            {isAdmin && demand.plannedMaterials?.length > 0 && (
+              <div className="mt-6 border-t pt-6 space-y-4">
+                <h3 className="text-sm font-bold text-gray-800 flex items-center uppercase animate-in fade-in duration-200">
+                  <Truck className="h-4 w-4 mr-2 text-blue-600 animate-pulse" /> Entrega de Materiais
+                </h3>
+                
+                {demand.materialsDelivered ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 text-green-800 rounded-xl text-xs font-bold shadow-sm">
+                      <span className="h-2 w-2 rounded-full bg-green-500 animate-ping" />
+                      <span className="font-extrabold uppercase">Materiais Entregues</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConfirmDialog({
+                          isOpen: true,
+                          title: 'Reverter Entrega de Materiais',
+                          message: 'Deseja realmente reverter a entrega de materiais para esta demanda? Isso reabrirá os materiais planejados como não-entregues e removerá os retornos automáticos pendentes.',
+                          onConfirm: () => revertMaterialsMutation.mutate()
+                        });
+                      }}
+                      className="w-full py-2.5 px-4 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-750 font-black text-xs uppercase rounded-xl transition-all border border-red-200 text-center cursor-pointer select-none active:scale-[0.98] shadow-sm hover:shadow-md"
+                    >
+                      Reverter Entrega
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl text-xs font-bold shadow-sm">
+                      <span className="h-2 w-2 rounded-full bg-amber-500" />
+                      <span className="font-extrabold uppercase">Aguardando Entrega</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConfirmDialog({
+                          isOpen: true,
+                          title: 'Confirmar Entrega de Materiais',
+                          message: 'Deseja marcar os materiais planejados como entregues aos eletricistas para esta demanda?',
+                          onConfirm: () => deliverMaterialsMutation.mutate()
+                        });
+                      }}
+                      className="w-full py-2.5 px-4 bg-amber-500 hover:bg-amber-600 text-white font-black text-xs uppercase rounded-xl transition-all border border-amber-500 hover:shadow-md text-center cursor-pointer select-none active:scale-[0.98] shadow-sm"
+                    >
+                      Entregar Materiais
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {isDone && (() => {

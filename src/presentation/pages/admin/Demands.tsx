@@ -22,6 +22,7 @@ export default function Demands() {
   const [editingDemand, setEditingDemand] = useState<any | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+  const [isSharing, setIsSharing] = useState(false);
   
   const showFeedback = (type: 'success' | 'error', message: string) => {
     setFeedback({ type, message });
@@ -168,64 +169,63 @@ export default function Demands() {
   };
 
   const handleWhatsAppShare = async (demand: any) => {
-    if (!demand) return;
+    if (!demand || isSharing) return;
+    setIsSharing(true);
 
-    const electriciansNames = demand.electricians && demand.electricians.length > 0
-      ? demand.electricians.map((e: any) => e.name).join(', ')
-      : 'Não especificado';
+    try {
+      const photosList = demand.photoUrl ? demand.photoUrl.split(',') : [];
 
-    const photosList = demand.photoUrl ? demand.photoUrl.split(',') : [];
+      let message = `*DEMANDA EXECUTADA E APROVADA* ✅\n\n`;
+      message += `📍 *Local:* ${demand.location || 'Não informado'}\n\n`;
 
-    let message = `*DEMANDA EXECUTADA E APROVADA* ✅\n\n`;
-    message += `📍 *Local:* ${demand.location || 'Não informado'}\n`;
-    message += `📝 *Descrição:* ${demand.description || 'Sem descrição'}\n`;
-    message += `🧑‍🔧 *Eletricista(s) executor(es):* ${electriciansNames}\n\n`;
+      // Try sharing via Web Share API if supported and has images to attach directly
+      if (photosList.length > 0 && navigator.share && navigator.canShare) {
+        try {
+          const filePromises = photosList.map(async (url, idx) => {
+            const trimmedUrl = url.trim();
+            const absoluteUrl = trimmedUrl.startsWith('http') 
+              ? trimmedUrl 
+              : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
+            const res = await fetch(absoluteUrl);
+            const blob = await res.blob();
+            const ext = trimmedUrl.split('.').pop()?.split('?')[0] || 'jpg';
+            const cleanExt = ['jpg', 'jpeg', 'png', 'webp'].includes(ext.toLowerCase()) ? ext.toLowerCase() : 'jpg';
+            return new File([blob], `foto_demanda_${idx + 1}.${cleanExt}`, { type: blob.type || `image/${cleanExt}` });
+          });
 
-    // Try sharing via Web Share API if supported and has images to attach directly
-    if (photosList.length > 0 && navigator.share && navigator.canShare) {
-      try {
-        const filePromises = photosList.map(async (url, idx) => {
+          const files = await Promise.all(filePromises);
+
+          if (navigator.canShare({ files })) {
+            await navigator.share({
+              files,
+              title: 'Demanda Executada e Aprovada',
+              text: message
+            });
+            return;
+          }
+        } catch (err) {
+          console.warn('Falha amigável/cancelamento via Web Share API, usando link do WhatsApp:', err);
+        }
+      }
+
+      if (photosList.length > 0) {
+        message += `📸 *Fotos do Serviço Executado:*\n`;
+        photosList.forEach((url: string, index: number) => {
           const trimmedUrl = url.trim();
           const absoluteUrl = trimmedUrl.startsWith('http') 
             ? trimmedUrl 
             : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
-          const res = await fetch(absoluteUrl);
-          const blob = await res.blob();
-          const ext = trimmedUrl.split('.').pop()?.split('?')[0] || 'jpg';
-          const cleanExt = ['jpg', 'jpeg', 'png', 'webp'].includes(ext.toLowerCase()) ? ext.toLowerCase() : 'jpg';
-          return new File([blob], `foto_demanda_${idx + 1}.${cleanExt}`, { type: blob.type || `image/${cleanExt}` });
+          message += `${index + 1}️⃣ ${absoluteUrl}\n`;
         });
-
-        const files = await Promise.all(filePromises);
-
-        if (navigator.canShare({ files })) {
-          await navigator.share({
-            files,
-            title: 'Demanda Executada e Aprovada',
-            text: message
-          });
-          return;
-        }
-      } catch (err) {
-        console.error('Falha ao compartilhar via Web Share API, usando link do WhatsApp:', err);
+      } else {
+        message += `⚠️ Nenhuma foto registrada.\n`;
       }
-    }
 
-    if (photosList.length > 0) {
-      message += `📸 *Fotos do Serviço Executado:*\n`;
-      photosList.forEach((url: string, index: number) => {
-        const trimmedUrl = url.trim();
-        const absoluteUrl = trimmedUrl.startsWith('http') 
-          ? trimmedUrl 
-          : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
-        message += `${index + 1}️⃣ ${absoluteUrl}\n`;
-      });
-    } else {
-      message += `⚠️ Nenhuma foto registrada.\n`;
+      const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
+      window.open(whatsappUrl, '_blank');
+    } finally {
+      setIsSharing(false);
     }
-
-    const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
-    window.open(whatsappUrl, '_blank');
   };
 
   const handleEditDemand = (demand: any) => {

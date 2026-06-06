@@ -8,6 +8,7 @@ import Dashboard from './presentation/pages/Dashboard.tsx';
 import Materials from './presentation/pages/admin/Materials.tsx';
 import Users from './presentation/pages/admin/Users.tsx';
 import Demands from './presentation/pages/admin/Demands.tsx';
+import SharePhotos from './presentation/pages/admin/SharePhotos.tsx';
 import DemandDetails from './presentation/pages/DemandDetails.tsx';
 import Reports from './presentation/pages/admin/Reports.tsx';
 import Vehicles from './presentation/pages/admin/Vehicles.tsx';
@@ -48,6 +49,7 @@ export default function App() {
                 <Route path="/admin/materials" element={<Materials />} />
                 <Route path="/admin/users" element={<Users />} />
                 <Route path="/admin/demands" element={<Demands />} />
+                <Route path="/admin/share-photos" element={<SharePhotos />} />
                 <Route path="/admin/reports" element={<Reports />} />
                 <Route path="/admin/vehicles" element={<Vehicles />} />
                 <Route path="/admin/tools" element={<Tools />} />

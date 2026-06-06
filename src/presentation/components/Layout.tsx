@@ -23,7 +23,8 @@ import {
   Wifi,
   WifiOff,
   RefreshCw,
-  AlertCircle
+  AlertCircle,
+  Share2
 } from 'lucide-react';
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -35,6 +36,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const menuItems = user?.role === 'ADMIN' ? [
     { name: 'Início', path: '/', icon: Home },
     { name: 'Demandas', path: '/admin/demands', icon: ClipboardList },
+    { name: 'Compartilhar Fotos', path: '/admin/share-photos', icon: Share2 },
     { name: 'Kits para Separação', path: '/admin/separation', icon: Layers },
     { name: 'Materiais', path: '/admin/materials', icon: Package },
     { name: 'Sobras a Retornar', path: '/admin/pending-returns', icon: RotateCcw },

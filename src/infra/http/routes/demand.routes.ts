@@ -16,6 +16,7 @@ demandRouter.get('/separation/data', DemandController.getSeparationData as any);
 demandRouter.get('/separation/pdf/:electricianId', DemandController.downloadSeparationPdf as any);
 demandRouter.put('/pending-returns/:id/clear', adminMiddleware as any, DemandController.clearPendingReturn as any);
 demandRouter.put('/:id/deliver-materials', adminMiddleware as any, DemandController.deliverMaterials as any);
+demandRouter.put('/:id/revert-deliver-materials', adminMiddleware as any, DemandController.revertDeliverMaterials as any);
 demandRouter.post('/', adminMiddleware as any, upload.single('photo'), DemandController.create as any);
 demandRouter.put('/:id', adminMiddleware as any, upload.single('photo'), DemandController.update as any);
 demandRouter.delete('/:id', adminMiddleware as any, DemandController.delete as any);
