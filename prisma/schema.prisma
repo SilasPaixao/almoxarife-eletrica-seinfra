@@ -223,3 +223,13 @@ model EquipmentDelivery {
 
   @@map("equipment_deliveries")
 }
+
+model Document {
+  id          String   @id @default(uuid())
+  name        String
+  fileUrl     String
+  uploadedAt  DateTime @default(now())
+
+  @@map("documents")
+}
+

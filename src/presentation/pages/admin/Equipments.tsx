@@ -18,7 +18,12 @@ import {
   Calendar, 
   User, 
   Clipboard, 
-  Info 
+  Info,
+  FileText,
+  Upload,
+  Download,
+  Eye,
+  Loader2
 } from 'lucide-react';
 import { formatLocalDate } from '../../utils/date.ts';
 
@@ -567,6 +572,7 @@ export default function Equipments() {
       </div>
 
       {/* CATALOG MODAL */}
+
       {isCatalogModalOpen && (
         <div className="fixed inset-0 bg-black/55 backdrop-blur-sm flex items-center justify-center p-4 z-[990]">
           <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-gray-100 animate-scale-in">

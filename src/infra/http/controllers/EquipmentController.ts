@@ -2,6 +2,7 @@ import { Response } from 'express';
 import prisma from '../../database/prisma.ts';
 import { AuthRequest } from '../middlewares/auth.middleware.ts';
 import { AuditService } from '../../database/audit.ts';
+import { StorageService } from '../../storage/StorageService.ts';
 
 export class EquipmentController {
   // EQUIPMENT REGISTRY

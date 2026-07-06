@@ -10,7 +10,7 @@ export function parseUTCDate(dateString: string | Date | undefined | null): Date
   const isoStr = typeof dateString === 'string' ? dateString : String(dateString);
   
   // Hande YYYY-MM-DD
-  const matchYMD = isoStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const matchYMD = isoStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (matchYMD) {
     const year = parseInt(matchYMD[1], 10);
     const month = parseInt(matchYMD[2], 10) - 1; // 0-indexed
@@ -19,7 +19,7 @@ export function parseUTCDate(dateString: string | Date | undefined | null): Date
   }
 
   // Handle DD/MM/YYYY
-  const matchDMY = isoStr.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  const matchDMY = isoStr.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (matchDMY) {
     const day = parseInt(matchDMY[1], 10);
     const month = parseInt(matchDMY[2], 10) - 1; // 0-indexed

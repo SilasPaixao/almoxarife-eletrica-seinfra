@@ -18,6 +18,7 @@ import Equipments from './presentation/pages/admin/Equipments.tsx';
 import PendingReturns from './presentation/pages/admin/PendingReturns.tsx';
 import MaterialSeparation from './presentation/pages/admin/MaterialSeparation.tsx';
 import BorrowedMaterials from './presentation/pages/admin/BorrowedMaterials.tsx';
+import InternalCommunications from './presentation/pages/admin/InternalCommunications.tsx';
 import ProtectedRoute from './presentation/components/ProtectedRoute.tsx';
 
 const queryClient = new QueryClient({
@@ -55,6 +56,7 @@ export default function App() {
                 <Route path="/admin/tools" element={<Tools />} />
                 <Route path="/admin/recovered" element={<RecoveredMaterials />} />
                 <Route path="/admin/equipments" element={<Equipments />} />
+                <Route path="/admin/cis" element={<InternalCommunications />} />
                 <Route path="/admin/pending-returns" element={<PendingReturns />} />
                 <Route path="/admin/separation" element={<MaterialSeparation />} />
                 <Route path="/admin/borrowed" element={<BorrowedMaterials />} />

@@ -1,8 +1,10 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { EquipmentController } from '../controllers/EquipmentController.ts';
 import { authMiddleware, roleMiddleware } from '../middlewares/auth.middleware.ts';
 
 const router = Router();
+const upload = multer({ storage: multer.memoryStorage() });
 
 // Equipments registration routes
 router.get('/', authMiddleware, EquipmentController.getAllEquipments);

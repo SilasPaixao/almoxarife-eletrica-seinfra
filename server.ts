@@ -12,6 +12,7 @@ import { vehicleRouter } from './src/infra/http/routes/vehicle.routes.ts';
 import { toolRouter } from './src/infra/http/routes/tool.routes.ts';
 import { recoveredRouter } from './src/infra/http/routes/recovered.routes.ts';
 import { equipmentRouter } from './src/infra/http/routes/equipment.routes.ts';
+import { ciRouter } from './src/infra/http/routes/ci.routes.ts';
 
 dotenv.config();
 
@@ -31,6 +32,7 @@ app.use('/api/vehicles', vehicleRouter);
 app.use('/api/tools', toolRouter);
 app.use('/api/recovered', recoveredRouter);
 app.use('/api/equipments', equipmentRouter);
+app.use('/api/cis', ciRouter);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
