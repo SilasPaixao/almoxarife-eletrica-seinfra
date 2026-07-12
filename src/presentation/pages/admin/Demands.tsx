@@ -11,6 +11,7 @@ import { CheckCircle, AlertCircle } from 'lucide-react';
 import { parseUTCDate, formatLocalDate } from '../../utils/date.ts';
 
 import ConfirmDialog from '../../components/ConfirmDialog.tsx';
+import ShareOptionsModal from '../../components/ShareOptionsModal.tsx';
 import { useOffline } from '../../context/OfflineContext.tsx';
 import { IndexedDbService } from '../../../infra/storage/indexedDbService.ts';
 
@@ -23,6 +24,7 @@ export default function Demands() {
   const [searchTerm, setSearchTerm] = useState('');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   const [isSharing, setIsSharing] = useState(false);
+  const [activeShareData, setActiveShareData] = useState<{ title: string; text: string; photos: string[] } | null>(null);
   
   const showFeedback = (type: 'success' | 'error', message: string) => {
     setFeedback({ type, message });
@@ -169,44 +171,13 @@ export default function Demands() {
   };
 
   const handleWhatsAppShare = async (demand: any) => {
-    if (!demand || isSharing) return;
-    setIsSharing(true);
+    if (!demand) return;
 
     try {
       const photosList = demand.photoUrl ? demand.photoUrl.split(',') : [];
 
       let message = `*DEMANDA EXECUTADA E APROVADA* ✅\n\n`;
       message += `📍 *Local:* ${demand.location || 'Não informado'}\n\n`;
-
-      // Try sharing via Web Share API if supported and has images to attach directly
-      if (photosList.length > 0 && navigator.share && navigator.canShare) {
-        try {
-          const filePromises = photosList.map(async (url, idx) => {
-            const trimmedUrl = url.trim();
-            const absoluteUrl = trimmedUrl.startsWith('http') 
-              ? trimmedUrl 
-              : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
-            const res = await fetch(absoluteUrl);
-            const blob = await res.blob();
-            const ext = trimmedUrl.split('.').pop()?.split('?')[0] || 'jpg';
-            const cleanExt = ['jpg', 'jpeg', 'png', 'webp'].includes(ext.toLowerCase()) ? ext.toLowerCase() : 'jpg';
-            return new File([blob], `foto_demanda_${idx + 1}.${cleanExt}`, { type: blob.type || `image/${cleanExt}` });
-          });
-
-          const files = await Promise.all(filePromises);
-
-          if (navigator.canShare({ files })) {
-            await navigator.share({
-              files,
-              title: 'Demanda Executada e Aprovada',
-              text: message
-            });
-            return;
-          }
-        } catch (err) {
-          console.warn('Falha amigável/cancelamento via Web Share API, usando link do WhatsApp:', err);
-        }
-      }
 
       if (photosList.length > 0) {
         message += `📸 *Fotos do Serviço Executado:*\n`;
@@ -221,10 +192,13 @@ export default function Demands() {
         message += `⚠️ Nenhuma foto registrada.\n`;
       }
 
-      const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
-      window.open(whatsappUrl, '_blank');
-    } finally {
-      setIsSharing(false);
+      setActiveShareData({
+        title: demand.location || 'Demanda Executada e Aprovada',
+        text: message,
+        photos: photosList
+      });
+    } catch (err) {
+      console.error('Error sharing demand:', err);
     }
   };
 
@@ -1048,6 +1022,14 @@ export default function Demands() {
         message={confirmDialog.message}
         onClose={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
         onConfirm={confirmDialog.onConfirm}
+      />
+
+      <ShareOptionsModal
+        isOpen={!!activeShareData}
+        onClose={() => setActiveShareData(null)}
+        title={activeShareData?.title || ''}
+        text={activeShareData?.text || ''}
+        photos={activeShareData?.photos || []}
       />
     </Layout>
   );

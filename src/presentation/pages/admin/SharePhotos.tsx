@@ -5,11 +5,13 @@ import api from '../../services/api.ts';
 import { Share2, Loader2, Calendar, Check, Play, ChevronRight, ChevronLeft, X, AlertCircle, Sparkles } from 'lucide-react';
 import { formatLocalDate, parseUTCDate } from '../../utils/date.ts';
 import { IndexedDbService } from '../../../infra/storage/indexedDbService.ts';
+import ShareOptionsModal from '../../components/ShareOptionsModal.tsx';
 
 export default function SharePhotos() {
   const [batchDate, setBatchDate] = useState(formatLocalDate(new Date(), 'yyyy-MM-dd'));
   const [isSharingBatch, setIsSharingBatch] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+  const [activeShareData, setActiveShareData] = useState<{ title: string; text: string; photos: string[] } | null>(null);
 
   const showFeedback = (type: 'success' | 'error', message: string) => {
     setFeedback({ type, message });
@@ -60,80 +62,33 @@ export default function SharePhotos() {
       batchDemands.forEach((d: any, idx: number) => {
         message += `${idx + 1}. *${d.location || 'Não informado'}*\n`;
       });
-
-      const photoPromises = batchDemands.flatMap((d: any) => {
-        const photos = d.photoUrl ? d.photoUrl.split(',') : [];
-        return photos.map(async (url: string, pIdx: number) => {
-          const trimmedUrl = url.trim();
-          if (!trimmedUrl) return null;
-          
-          const absoluteUrl = trimmedUrl.startsWith('http') 
-            ? trimmedUrl 
-            : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
-          
-          try {
-            const res = await fetch(absoluteUrl);
-            const blob = await res.blob();
-            const ext = trimmedUrl.split('.').pop()?.split('?')[0] || 'jpg';
-            const cleanExt = ['jpg', 'jpeg', 'png', 'webp'].includes(ext.toLowerCase()) ? ext.toLowerCase() : 'jpg';
-            
-            const sanitizedLocation = (d.location || 'demanda').replace(/[^a-zA-Z0-9]/g, '_');
-            return new File([blob], `${sanitizedLocation}_foto_${pIdx + 1}.${cleanExt}`, {
-              type: blob.type || `image/${cleanExt}`
-            });
-          } catch (err) {
-            console.error('Failed to fetch photo for bulk share:', absoluteUrl, err);
-            return null;
-          }
-        });
-      });
-
-      const filesResult = await Promise.all(photoPromises);
-      const files = filesResult.filter((f): f is File => f !== null);
-
-      if (files.length > 0 && navigator.share && navigator.canShare) {
-        try {
-          if (navigator.canShare({ files })) {
-            await navigator.share({
-              files,
-              title: `FOTOS E LOCAIS - ${formatLocalDate(batchDate, 'dd/MM/yyyy')}`,
-              text: message
-            });
-            showFeedback('success', 'Mídias e locais preparados e enviados!');
-            return;
-          }
-        } catch (shareErr: any) {
-          console.warn('Native folder sharing failed, using fallback:', shareErr);
-          if (shareErr.name === 'AbortError') {
-            showFeedback('success', 'Compartilhamento cancelado pelo usuário.');
-            return;
-          }
-        }
-      }
-
-      // Fallback: build an aggregated message with direct URLs and open WhatsApp
-      let fallbackMessage = `*DEMANDAS DO DIA ${formatLocalDate(batchDate, 'dd/MM/yyyy')}* 📋\n\n`;
-      fallbackMessage += `📍 *Localidades Executadas:*\n`;
-      batchDemands.forEach((d: any, idx: number) => {
-        fallbackMessage += `${idx + 1}. *${d.location || 'Não informado'}*\n`;
-      });
-      fallbackMessage += `\n📸 *Fotos das Demandas:*\n`;
+      message += `\n📸 *Fotos das Demandas:*\n`;
       
+      const photoUrls: string[] = [];
       batchDemands.forEach((d: any) => {
         if (d.photoUrl) {
           const photos = d.photoUrl.split(',');
           photos.forEach((url: string, index: number) => {
             const trimmedUrl = url.trim();
-            const absoluteUrl = trimmedUrl.startsWith('http') 
-              ? trimmedUrl 
-              : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
-            fallbackMessage += `- Local "*${d.location}*" (Foto ${index + 1}): ${absoluteUrl}\n`;
+            if (trimmedUrl) {
+              const absoluteUrl = trimmedUrl.startsWith('http') 
+                ? trimmedUrl 
+                : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
+              
+              if (!photoUrls.includes(trimmedUrl)) {
+                photoUrls.push(trimmedUrl);
+              }
+              message += `- Local "*${d.location}*" (Foto ${index + 1}): ${absoluteUrl}\n`;
+            }
           });
         }
       });
 
-      const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(fallbackMessage)}`;
-      window.open(whatsappUrl, '_blank');
+      setActiveShareData({
+        title: `FOTOS E LOCAIS - ${formatLocalDate(batchDate, 'dd/MM/yyyy')}`,
+        text: message,
+        photos: photoUrls
+      });
     } catch (err) {
       console.error('Error sharing all photos at once:', err);
       showFeedback('error', 'Ocorreu um erro ao preparar o envio das fotos e locais.');
@@ -145,60 +100,27 @@ export default function SharePhotos() {
   const shareSpecificDemand = async (d: any, onCompleted?: () => void) => {
     try {
       const photos = d.photoUrl ? d.photoUrl.split(',') : [];
-      const message = `📍 *Local:* ${d.location || 'Não informado'}`;
-
-      if (photos.length > 0 && navigator.share && navigator.canShare) {
-        try {
-          const filePromises = photos.map(async (url: string, idx: number) => {
-            const trimmedUrl = url.trim();
-            const absoluteUrl = trimmedUrl.startsWith('http') 
-              ? trimmedUrl 
-              : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
-            
-            const res = await fetch(absoluteUrl);
-            const blob = await res.blob();
-            const ext = trimmedUrl.split('.').pop()?.split('?')[0] || 'jpg';
-            const cleanExt = ['jpg', 'jpeg', 'png', 'webp'].includes(ext.toLowerCase()) ? ext.toLowerCase() : 'jpg';
-            
-            const sanitizedLocation = (d.location || 'demanda').replace(/[^a-zA-Z0-9]/g, '_');
-            return new File([blob], `${sanitizedLocation}_foto_${idx + 1}.${cleanExt}`, {
-              type: blob.type || `image/${cleanExt}`
-            });
-          });
-
-          const files = await Promise.all(filePromises);
-
-          if (navigator.canShare({ files })) {
-            await navigator.share({
-              files,
-              title: d.location || 'Demanda',
-              text: message
-            });
-            onCompleted?.();
-            return true;
-          }
-        } catch (shareErr: any) {
-          console.warn('Native individual sharing failed, using fallback:', shareErr);
-          if (shareErr.name === 'AbortError') {
-            // Even if the user closes/aborts, treat it gently
-            showFeedback('success', 'Partilha fechada/cancelada pelo usuário.');
-            return false;
-          }
-        }
+      let message = `📍 *Local:* ${d.location || 'Não informado'}\n\n`;
+      
+      if (photos.length > 0) {
+        message += `📸 *Fotos do Serviço Executado:*\n`;
+        photos.forEach((url: string, index: number) => {
+          const trimmedUrl = url.trim();
+          const absoluteUrl = trimmedUrl.startsWith('http') 
+            ? trimmedUrl 
+            : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
+          message += `${index + 1}️⃣ ${absoluteUrl}\n`;
+        });
+      } else {
+        message += `⚠️ Nenhuma foto registrada.\n`;
       }
 
-      // Fallback for WhatsApp (plain text with URLs)
-      let fallbackMessage = `📍 *Local:* ${d.location || 'Não informado'}\n\n`;
-      photos.forEach((url: string, index: number) => {
-        const trimmedUrl = url.trim();
-        const absoluteUrl = trimmedUrl.startsWith('http') 
-          ? trimmedUrl 
-          : `${window.location.origin}${trimmedUrl.startsWith('/') ? '' : '/'}${trimmedUrl}`;
-        fallbackMessage += `📸 Foto ${index + 1}: ${absoluteUrl}\n`;
+      setActiveShareData({
+        title: d.location || 'Demanda',
+        text: message,
+        photos
       });
 
-      const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(fallbackMessage)}`;
-      window.open(whatsappUrl, '_blank');
       onCompleted?.();
       return true;
     } catch (err) {
@@ -209,10 +131,8 @@ export default function SharePhotos() {
   };
 
   const handleSingleShare = async (d: any) => {
-    if (!d || sharingDemandId) return;
-    setSharingDemandId(d.id);
+    if (!d) return;
     await shareSpecificDemand(d);
-    setSharingDemandId(null);
   };
 
   const handleBatchShareClick = () => {
@@ -563,6 +483,14 @@ export default function SharePhotos() {
           </div>
         </div>
       )}
+
+      <ShareOptionsModal
+        isOpen={!!activeShareData}
+        onClose={() => setActiveShareData(null)}
+        title={activeShareData?.title || ''}
+        text={activeShareData?.text || ''}
+        photos={activeShareData?.photos || []}
+      />
     </Layout>
   );
 }
