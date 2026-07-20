@@ -11,6 +11,12 @@ materialRouter.use(authMiddleware as any);
 materialRouter.get('/', MaterialController.getAll as any);
 
 materialRouter.post(
+  '/merge',
+  adminMiddleware as any,
+  MaterialController.merge as any
+);
+
+materialRouter.post(
   '/', 
   adminMiddleware as any, 
   upload.single('image'), 

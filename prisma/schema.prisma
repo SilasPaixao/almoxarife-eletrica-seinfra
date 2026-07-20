@@ -45,6 +45,7 @@ model Material {
   name        String
   imageUrl    String?
   unit        String   @default("un")
+  isExclusive Boolean  @default(false)
   components  Json?    // Optional JSON array: [{ materialId: String, quantity: Int }]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -86,6 +87,7 @@ model Demand {
   
   isPriority           Boolean        @default(false)
   priorityExecutionDate DateTime?
+  repetition           Int            @default(1)
   
   plannedMaterials     DemandMaterial[]
   usedMaterials        UsedMaterial[]

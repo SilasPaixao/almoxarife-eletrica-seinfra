@@ -10,6 +10,7 @@ export interface OfflineDemand {
     materials: Array<{ materialId: string; quantity: number }>;
     isPriority?: boolean;
     priorityExecutionDate?: string;
+    repetition?: number;
   };
   photoBlob: Blob | null;
   photoName: string | null;

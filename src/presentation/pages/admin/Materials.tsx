@@ -4,13 +4,13 @@ import Layout from '../../components/Layout.tsx';
 import Modal from '../../components/Modal.tsx';
 import ConfirmDialog from '../../components/ConfirmDialog.tsx';
 import api from '../../services/api.ts';
-import { Plus, Edit, Trash2, Camera, X, Loader2, Save, Package } from 'lucide-react';
+import { Plus, Edit, Trash2, Camera, X, Loader2, Save, Package, GitMerge } from 'lucide-react';
 
 export default function Materials() {
   const queryClient = useQueryClient();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState<any>(null);
-  const [formData, setFormData] = useState({ name: '', unit: 'un' });
+  const [formData, setFormData] = useState({ name: '', unit: 'un', isExclusive: false });
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState({
@@ -22,6 +22,10 @@ export default function Materials() {
   const [fastMaterialName, setFastMaterialName] = useState('');
   const [fastMaterialUnit, setFastMaterialUnit] = useState('un');
   const [showFastForm, setShowFastForm] = useState(false);
+
+  const [isMergeModalOpen, setIsMergeModalOpen] = useState(false);
+  const [mergeSourceId, setMergeSourceId] = useState('');
+  const [mergeTargetId, setMergeTargetId] = useState('');
 
   const { data: materials, isLoading } = useQuery({
     queryKey: ['materials'],
@@ -65,10 +69,33 @@ export default function Materials() {
     }
   });
 
+  const mergeMutation = useMutation({
+    mutationFn: async (payload: { sourceId: string; targetId: string }) => {
+      return (await api.post('/materials/merge', payload)).data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['materials'] });
+      queryClient.invalidateQueries({ queryKey: ['demands'] });
+      queryClient.invalidateQueries({ queryKey: ['report'] });
+      queryClient.invalidateQueries({ queryKey: ['reports-history'] });
+      queryClient.invalidateQueries({ queryKey: ['available-periods'] });
+      setIsMergeModalOpen(false);
+      setMergeSourceId('');
+      setMergeTargetId('');
+    },
+  });
+
+  const handleMergeSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!mergeSourceId || !mergeTargetId) return;
+    if (mergeSourceId === mergeTargetId) return;
+    mergeMutation.mutate({ sourceId: mergeSourceId, targetId: mergeTargetId });
+  };
+
   const handleOpenModal = (material: any = null) => {
     if (material) {
       setEditingMaterial(material);
-      setFormData({ name: material.name, unit: material.unit || 'un' });
+      setFormData({ name: material.name, unit: material.unit || 'un', isExclusive: material.isExclusive || false });
       setPreview(material.imageUrl);
       
       const parsedComps = material.components 
@@ -83,7 +110,7 @@ export default function Materials() {
       }
     } else {
       setEditingMaterial(null);
-      setFormData({ name: '', unit: 'un' });
+      setFormData({ name: '', unit: 'un', isExclusive: false });
       setPreview(null);
       setIsGrouped(false);
       setCompositeComponents([]);
@@ -95,7 +122,7 @@ export default function Materials() {
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setEditingMaterial(null);
-    setFormData({ name: '', unit: 'un' });
+    setFormData({ name: '', unit: 'un', isExclusive: false });
     setFile(null);
     setPreview(null);
     setIsGrouped(false);
@@ -118,6 +145,7 @@ export default function Materials() {
     const data = new FormData();
     data.append('name', formData.name);
     data.append('unit', formData.unit);
+    data.append('isExclusive', String(formData.isExclusive));
     if (file) {
       data.append('image', file);
     } else if (!preview && editingMaterial) {
@@ -136,17 +164,25 @@ export default function Materials() {
 
   return (
     <Layout>
-      <div className="flex justify-between items-center mb-8">
+      <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-8">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Materiais</h1>
           <p className="text-gray-600">Gerencie o catálogo de materiais disponíveis.</p>
         </div>
-        <button
-          onClick={() => handleOpenModal()}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center hover:bg-blue-700 transition-colors"
-        >
-          <Plus className="h-5 w-5 mr-2" /> Novo Material
-        </button>
+        <div className="flex flex-wrap gap-3">
+          <button
+            onClick={() => setIsMergeModalOpen(true)}
+            className="bg-indigo-600 text-white px-4 py-2 rounded-lg flex items-center hover:bg-indigo-700 transition-colors shadow-sm font-semibold text-sm cursor-pointer"
+          >
+            <GitMerge className="h-4 w-4 mr-2" /> Fundir Materiais
+          </button>
+          <button
+            onClick={() => handleOpenModal()}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center hover:bg-blue-700 transition-colors shadow-sm font-semibold text-sm cursor-pointer"
+          >
+            <Plus className="h-4 w-4 mr-2" /> Novo Material
+          </button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -179,6 +215,11 @@ export default function Materials() {
                   <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-gray-100 text-gray-500">
                     {material.unit === 'm' ? 'Metros (m)' : 'Unidade (un)'}
                   </span>
+                  {material.isExclusive && (
+                    <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-50 text-amber-700 border border-amber-100">
+                      Exclusivo
+                    </span>
+                  )}
                   {material.components && (typeof material.components === 'string' ? JSON.parse(material.components) : material.components)?.length > 0 && (
                     <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-blue-50 text-blue-600 border border-blue-100">
                       Grupo
@@ -282,19 +323,36 @@ export default function Materials() {
             </div>
           </div>
 
-          <div className="border-t border-gray-100 pt-4">
-            <label className="flex items-center space-x-2 text-sm font-medium text-gray-700 mb-2 cursor-pointer">
-              <input
-                type="checkbox"
-                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                checked={isGrouped}
-                onChange={(e) => setIsGrouped(e.target.checked)}
-              />
-              <span>Este é um material agrupado (composição)</span>
-            </label>
-            <p className="text-xs text-gray-500 mb-4 ml-6">
-              Materiais agrupados não aparecem em detalhe no relatório; ao invés, são expandidos em seus componentes individuais.
-            </p>
+          <div className="border-t border-gray-100 pt-4 space-y-4">
+            <div>
+              <label className="flex items-center space-x-2 text-sm font-medium text-gray-700 mb-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  checked={formData.isExclusive}
+                  onChange={(e) => setFormData({ ...formData, isExclusive: e.target.checked })}
+                />
+                <span>Material Exclusivo</span>
+              </label>
+              <p className="text-xs text-gray-500 ml-6">
+                Se marcado, ao dar baixa em uma demanda com múltiplas unidades deste material, ela será dividida em demandas individuais de 1 unidade cada no relatório (as outras demandas herdarão os demais materiais, exceto os medidos em metros). Se marcado retroativamente, as demandas já concluídas com mais de 1 unidade deste material serão divididas retroativamente.
+              </p>
+            </div>
+
+            <div className="border-t border-gray-100 pt-4">
+              <label className="flex items-center space-x-2 text-sm font-medium text-gray-700 mb-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  checked={isGrouped}
+                  onChange={(e) => setIsGrouped(e.target.checked)}
+                />
+                <span>Este é um material agrupado (composição)</span>
+              </label>
+              <p className="text-xs text-gray-500 ml-6 mb-4">
+                Materiais agrupados não aparecem em detalhe no relatório; ao invés, são expandidos em seus componentes individuais.
+              </p>
+            </div>
 
             {isGrouped && (
               <div className="ml-6 space-y-3 bg-gray-50 p-4 rounded-xl border border-gray-100">
@@ -443,6 +501,110 @@ export default function Materials() {
         onClose={() => setConfirmDialog({ isOpen: false, materialId: '' })}
         onConfirm={() => deleteMutation.mutate(confirmDialog.materialId)}
       />
+
+      <Modal
+        isOpen={isMergeModalOpen}
+        onClose={() => {
+          setIsMergeModalOpen(false);
+          setMergeSourceId('');
+          setMergeTargetId('');
+        }}
+        title="Fundir Materiais"
+      >
+        <form onSubmit={handleMergeSubmit} className="p-6 space-y-6">
+          {mergeMutation.isError && (
+            <div className="p-3 bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg flex items-center">
+              <X className="h-4 w-4 mr-2 flex-shrink-0" />
+              <span>Erro ao fundir materiais. {(mergeMutation.error as any)?.response?.data?.error || 'Verifique sua conexão.'}</span>
+            </div>
+          )}
+
+          {mergeMutation.isSuccess && (
+            <div className="p-3 bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg">
+              Materiais fundidos com sucesso!
+            </div>
+          )}
+
+          <div className="p-4 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-xl space-y-2">
+            <h4 className="font-bold flex items-center gap-1.5">
+              ⚠️ Alerta de Ação Irreversível
+            </h4>
+            <p className="text-xs leading-relaxed">
+              Ao fundir, todos os planejamentos (orçamentos), usos (baixas) e retornos/devoluções do <strong>Material de Origem</strong> serão transferidos para o <strong>Material de Destino</strong>.
+            </p>
+            <p className="text-xs leading-relaxed">
+              O Material de Origem será <strong>excluído permanentemente</strong> do catálogo. Os relatórios semanais, mensais e anuais serão atualizados instantaneamente refletindo a nova soma no material unificado.
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                1. Material a ser fundido e EXCLUÍDO (Origem)
+              </label>
+              <select
+                required
+                value={mergeSourceId}
+                onChange={(e) => setMergeSourceId(e.target.value)}
+                className="w-full p-2.5 bg-white border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+              >
+                <option value="">Selecione o material duplicado/incorreto...</option>
+                {materials?.map((m: any) => (
+                  <option key={m.id} value={m.id} disabled={m.id === mergeTargetId}>
+                    {m.name} ({m.unit || 'un'})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                2. Material que tomará o lugar (Destino)
+              </label>
+              <select
+                required
+                value={mergeTargetId}
+                onChange={(e) => setMergeTargetId(e.target.value)}
+                className="w-full p-2.5 bg-white border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+              >
+                <option value="">Selecione o material correto que deve permanecer...</option>
+                {materials?.map((m: any) => (
+                  <option key={m.id} value={m.id} disabled={m.id === mergeSourceId}>
+                    {m.name} ({m.unit || 'un'})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="flex gap-4 pt-4">
+            <button
+              type="button"
+              onClick={() => {
+                setIsMergeModalOpen(false);
+                setMergeSourceId('');
+                setMergeTargetId('');
+              }}
+              className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={mergeMutation.isPending || !mergeSourceId || !mergeTargetId || mergeSourceId === mergeTargetId}
+              className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+            >
+              {mergeMutation.isPending ? (
+                <Loader2 className="animate-spin h-5 w-5" />
+              ) : (
+                <>
+                  <GitMerge className="h-5 w-5" /> Confirmar Fusão
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </Layout>
   );
 }

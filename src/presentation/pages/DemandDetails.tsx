@@ -94,7 +94,8 @@ export default function DemandDetails() {
     returnedMaterials: [] as { materialId: string; quantity: number }[],
     recoveredMaterials: [] as { materialId: string; quantity: number }[],
     isPriority: false,
-    priorityExecutionDate: ''
+    priorityExecutionDate: '',
+    repetition: 1
   });
   const [materialSearch, setMaterialSearch] = useState('');
   const [showMaterialResults, setShowMaterialResults] = useState(false);
@@ -711,6 +712,7 @@ export default function DemandDetails() {
       electricianIds: demand.electricians?.map((e: any) => e.id) || [],
       isPriority: demand.isPriority || false,
       priorityExecutionDate: demand.priorityExecutionDate ? formatLocalDate(demand.priorityExecutionDate, 'yyyy-MM-dd') : '',
+      repetition: demand.repetition || 1,
       materials: demand.plannedMaterials?.map((pm: any) => ({
         materialId: pm.materialId,
         quantity: pm.quantity,
@@ -1675,7 +1677,7 @@ export default function DemandDetails() {
                    <p className="text-xs text-gray-500 italic">Responsáveis: {demand.electricians?.map((e: any) => e.name).join(', ')}</p>
                 </div>
               )}
-              <div className="md:col-span-2">
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Contato do Solicitante</label>
                 <input
                   type="text"
@@ -1685,6 +1687,23 @@ export default function DemandDetails() {
                   onChange={(e) => user?.role === 'ADMIN' && setEditFormData({...editFormData, clientNumber: e.target.value})}
                 />
               </div>
+
+              {user?.role === 'ADMIN' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Repetição / Divisão de Demanda</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    value={editFormData.repetition}
+                    onChange={(e) => setEditFormData({...editFormData, repetition: Math.max(1, parseInt(e.target.value) || 1)})}
+                  />
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    A demanda se manterá como uma única em "Pendentes" e "Em Aprovação", mas ao ser aprovada, será registrada como <span className="font-bold text-blue-600">{editFormData.repetition}</span> demandas separadas com as mesmas quantidades em "Executadas" e no relatório.
+                  </p>
+                </div>
+              )}
 
               {user?.role === 'ADMIN' && (
                 <div className="bg-amber-50/70 p-4 rounded-xl border border-amber-200 space-y-3 md:col-span-2">

@@ -76,6 +76,269 @@ async function recalculateNotUsedReturns(demandId: string, tx: any) {
   }
 }
 
+function getOrdinalPortuguese(n: number): string {
+  const ordinals = [
+    'primeira', 'segunda', 'terceira', 'quarta', 'quinta',
+    'sexta', 'sétima', 'oitava', 'nona', 'décima',
+    'décima primeira', 'décima segunda', 'décima terceira', 'décima quarta', 'décima quinta',
+    'décima sexta', 'décima sétima', 'décima oitava', 'décima nona', 'vigésima'
+  ];
+  if (n >= 1 && n <= ordinals.length) {
+    return ordinals[n - 1];
+  }
+  return `${n}ª`;
+}
+
+function appendOrdinalToDescription(fullDescription: string, index: number): string {
+  const base = fullDescription.split('###REF_PHOTO:')[0] || '';
+  const ref = fullDescription.includes('###REF_PHOTO:') ? '###REF_PHOTO:' + fullDescription.split('###REF_PHOTO:')[1] : '';
+  const ordinalWord = getOrdinalPortuguese(index);
+  const suffix = ` - ${ordinalWord} demanda para o mesmo local`;
+  return `${base}${suffix}${ref}`;
+}
+
+async function handleDemandExecutionSplitting(demandId: string, tx: any): Promise<string[]> {
+  const demand = await tx.demand.findUnique({
+    where: { id: demandId },
+    include: {
+      electricians: true,
+      plannedMaterials: true,
+      usedMaterials: true,
+      returnedMaterials: true,
+    }
+  });
+
+  const processedIds: string[] = [demandId];
+
+  if (!demand) return processedIds;
+  if (demand.repetition <= 1) return processedIds;
+
+  const totalRepetitions = demand.repetition;
+
+  // 1. Update the original/main demand: set repetition to 1, since it is now approved and split.
+  await tx.demand.update({
+    where: { id: demandId },
+    data: { repetition: 1 }
+  });
+
+  // 2. Create totalRepetitions - 1 cloned demands with status CONCLUDED and appropriate descriptions
+  for (let i = 2; i <= totalRepetitions; i++) {
+    const newDescription = appendOrdinalToDescription(demand.description, i);
+    
+    const clone = await tx.demand.create({
+      data: {
+        date: demand.date,
+        description: newDescription,
+        location: demand.location,
+        googleMapsUrl: demand.googleMapsUrl,
+        clientNumber: demand.clientNumber,
+        status: 'CONCLUDED',
+        materialsDelivered: demand.materialsDelivered,
+        excludeFromSeparation: demand.excludeFromSeparation,
+        photoUrl: demand.photoUrl,
+        transformerNumber: demand.transformerNumber,
+        observation: demand.observation,
+        vehicles: demand.vehicles,
+        tools: demand.tools,
+        isPriority: demand.isPriority,
+        priorityExecutionDate: demand.priorityExecutionDate,
+        createdById: demand.createdById,
+        repetition: 1, // each clone has repetition 1
+        electricians: {
+          connect: demand.electricians.map((e: any) => ({ id: e.id }))
+        },
+        plannedMaterials: {
+          create: demand.plannedMaterials.map((pm: any) => ({
+            materialId: pm.materialId,
+            quantity: pm.quantity,
+            borrowed: pm.borrowed,
+            borrowedDeadline: pm.borrowedDeadline
+          }))
+        },
+        usedMaterials: {
+          create: demand.usedMaterials.map((um: any) => ({
+            materialId: um.materialId,
+            quantity: um.quantity
+          }))
+        },
+        returnedMaterials: {
+          create: demand.returnedMaterials.map((rm: any) => ({
+            materialId: rm.materialId,
+            materialName: rm.materialName,
+            quantity: rm.quantity,
+            type: rm.type,
+            isReturned: rm.isReturned,
+            date: rm.date
+          }))
+        }
+      }
+    });
+
+    processedIds.push(clone.id);
+
+    await AuditService.log('CREATE_CLONE_CONCLUDED', 'DEMAND', demand.createdById, clone.id, {
+      originalId: demandId,
+      location: clone.location,
+      description: clone.description
+    });
+  }
+
+  return processedIds;
+}
+
+export async function handleExclusiveMaterialSplitting(demandId: string, tx: any) {
+  const demand = await tx.demand.findUnique({
+    where: { id: demandId },
+    include: {
+      electricians: true,
+      plannedMaterials: true,
+      usedMaterials: {
+        include: {
+          material: true
+        }
+      },
+      returnedMaterials: true,
+    }
+  });
+
+  if (!demand) return;
+  if (demand.status !== 'CONCLUDED') return;
+
+  // Find any used material that is exclusive and has quantity > 1
+  const exclusiveUsed = demand.usedMaterials.find((um: any) => um.material && um.material.isExclusive && um.quantity > 1);
+  if (!exclusiveUsed) return;
+
+  const N = exclusiveUsed.quantity; // The number of total demands to split into
+
+  // Update the original demand: set the quantity of this exclusive material to 1
+  await tx.usedMaterial.update({
+    where: { id: exclusiveUsed.id },
+    data: { quantity: 1 }
+  });
+
+  const createdCloneIds: string[] = [];
+
+  // Create N - 1 cloned demands
+  for (let i = 2; i <= N; i++) {
+    const newDescription = appendOrdinalToDescription(demand.description, i);
+
+    // Filter used materials:
+    // - Exclusive material: quantity is 1
+    // - Non-exclusive & non-meter: same quantity as original
+    // - Meter materials: ignored (do not create at all)
+    const clonedUsedMaterialsData: any[] = [];
+    for (const um of demand.usedMaterials) {
+      if (um.materialId === exclusiveUsed.materialId) {
+        clonedUsedMaterialsData.push({
+          materialId: um.materialId,
+          quantity: 1
+        });
+      } else {
+        const unitLower = um.material?.unit?.toLowerCase() || '';
+        const isMeter = unitLower === 'm' || unitLower.startsWith('metro');
+        if (!isMeter) {
+          clonedUsedMaterialsData.push({
+            materialId: um.materialId,
+            quantity: um.quantity
+          });
+        }
+      }
+    }
+
+    const clone = await tx.demand.create({
+      data: {
+        date: demand.date,
+        description: newDescription,
+        location: demand.location,
+        googleMapsUrl: demand.googleMapsUrl,
+        clientNumber: demand.clientNumber,
+        status: 'CONCLUDED',
+        materialsDelivered: demand.materialsDelivered,
+        excludeFromSeparation: demand.excludeFromSeparation,
+        photoUrl: demand.photoUrl,
+        transformerNumber: demand.transformerNumber,
+        observation: demand.observation,
+        vehicles: demand.vehicles,
+        tools: demand.tools,
+        isPriority: demand.isPriority,
+        priorityExecutionDate: demand.priorityExecutionDate,
+        createdById: demand.createdById,
+        repetition: 1, // each clone has repetition 1
+        electricians: {
+          connect: demand.electricians.map((e: any) => ({ id: e.id }))
+        },
+        plannedMaterials: {
+          create: demand.plannedMaterials.map((pm: any) => ({
+            materialId: pm.materialId,
+            quantity: pm.quantity,
+            borrowed: pm.borrowed,
+            borrowedDeadline: pm.borrowedDeadline
+          }))
+        },
+        usedMaterials: {
+          create: clonedUsedMaterialsData
+        },
+        returnedMaterials: {
+          create: demand.returnedMaterials.map((rm: any) => ({
+            materialId: rm.materialId,
+            materialName: rm.materialName,
+            quantity: rm.quantity,
+            type: rm.type,
+            isReturned: rm.isReturned,
+            date: rm.date
+          }))
+        }
+      }
+    });
+
+    createdCloneIds.push(clone.id);
+
+    await AuditService.log('CREATE_CLONE_CONCLUDED', 'DEMAND', demand.createdById, clone.id, {
+      originalId: demandId,
+      location: clone.location,
+      description: clone.description,
+      reason: 'EXCLUSIVE_MATERIAL_SPLIT'
+    });
+  }
+
+  // Recursively split any other exclusive materials on the original demand
+  await handleExclusiveMaterialSplitting(demandId, tx);
+
+  // Recursively split any other exclusive materials on all created clones
+  for (const cloneId of createdCloneIds) {
+    await handleExclusiveMaterialSplitting(cloneId, tx);
+  }
+}
+
+export async function processDemandPostApprovalOrConclusion(demandId: string, tx: any) {
+  // 1. Split by repetition first
+  const allIds = await handleDemandExecutionSplitting(demandId, tx);
+
+  // 2. For each resulting demand, check and split by exclusive materials
+  for (const id of allIds) {
+    await handleExclusiveMaterialSplitting(id, tx);
+  }
+}
+
+export async function retroactiveSplitForExclusiveMaterial(materialId: string, tx: any) {
+  const demandsToSplit = await tx.demand.findMany({
+    where: {
+      status: 'CONCLUDED',
+      usedMaterials: {
+        some: {
+          materialId,
+          quantity: { gt: 1 }
+        }
+      }
+    },
+    select: { id: true }
+  });
+
+  for (const d of demandsToSplit) {
+    await handleExclusiveMaterialSplitting(d.id, tx);
+  }
+}
+
 export class DemandController {
   static async getAll(req: AuthRequest, res: Response) {
     try {
@@ -111,6 +374,7 @@ export class DemandController {
   static async create(req: AuthRequest, res: Response) {
     try {
       const { date, description, location, googleMapsUrl, clientNumber, electricianIds, materials } = req.body;
+      const repetition = Number(req.body.repetition) || 1;
 
       let parsedElectricianIds: string[] = [];
       if (electricianIds) {
@@ -161,31 +425,34 @@ export class DemandController {
       const isPriority = isAdminUser && (isPriorityParam === true || isPriorityParam === 'true');
       const priorityExecutionDate = isPriority && priorityExecutionDateParam ? parseDateAtNoon(priorityExecutionDateParam) : null;
 
-      const demand = await prisma.demand.create({
-        data: {
-          date: parseDateAtNoon(date),
-          description: dbDescription,
-          location,
-          googleMapsUrl,
-          clientNumber,
-          isPriority,
-          priorityExecutionDate,
-          electricians: {
-            connect: (parsedElectricianIds || []).map((id: string) => ({ id }))
+      const demand = await prisma.$transaction(async (tx) => {
+        const d = await tx.demand.create({
+          data: {
+            date: parseDateAtNoon(date),
+            description: dbDescription,
+            location,
+            googleMapsUrl,
+            clientNumber,
+            isPriority,
+            priorityExecutionDate,
+            repetition,
+            electricians: {
+              connect: (parsedElectricianIds || []).map((id: string) => ({ id }))
+            },
+            createdById: req.user!.id,
+            plannedMaterials: {
+              create: (parsedMaterials || []).map((m: any) => ({
+                materialId: m.materialId,
+                quantity: Number(m.quantity),
+                borrowed: m.borrowed === true || m.borrowed === 'true',
+                borrowedDeadline: m.borrowedDeadline ? parseDateAtNoon(m.borrowedDeadline) : null,
+              })),
+            },
           },
-          createdById: req.user!.id,
-          plannedMaterials: {
-            create: (parsedMaterials || []).map((m: any) => ({
-              materialId: m.materialId,
-              quantity: Number(m.quantity),
-              borrowed: m.borrowed === true || m.borrowed === 'true',
-              borrowedDeadline: m.borrowedDeadline ? parseDateAtNoon(m.borrowedDeadline) : null,
-            })),
-          },
-        },
+        });
+        await AuditService.log('CREATE', 'DEMAND', req.user!.id, d.id, { description, location });
+        return d;
       });
-
-      await AuditService.log('CREATE', 'DEMAND', req.user!.id, demand.id, { description, location });
 
       res.status(201).json(StorageService.mapDemand(demand));
     } catch (error) {
@@ -212,7 +479,8 @@ export class DemandController {
         usedMaterials,
         returnedMaterials,
         isPriority,
-        priorityExecutionDate
+        priorityExecutionDate,
+        repetition
       } = req.body;
 
       const isAdmin = req.user?.role === 'ADMIN';
@@ -298,6 +566,10 @@ export class DemandController {
         clientNumber,
       };
 
+      if (repetition !== undefined) {
+        updateData.repetition = Math.max(1, Number(repetition) || 1);
+      }
+
       if (isAdmin) {
         if (isPriority !== undefined) {
           updateData.isPriority = isPriority === true || isPriority === 'true';
@@ -342,6 +614,8 @@ export class DemandController {
           updateData.tools = Array.isArray(tools) ? tools : (typeof tools === 'string' ? tools.split(',').map((v: string) => v.trim()).filter(Boolean) : []);
         }
       }
+
+      const repCount = Number(repetition) || 1;
 
       await prisma.$transaction(async (tx) => {
         // Handlers for both Planned and Used materials
@@ -415,6 +689,11 @@ export class DemandController {
           where: { id },
           data: updateData,
         });
+
+        const finalStatus = updateData.status || existingDemand.status;
+        if (finalStatus === 'CONCLUDED') {
+          await processDemandPostApprovalOrConclusion(id, tx);
+        }
       });
 
       await AuditService.log('UPDATE', 'DEMAND', req.user!.id, id, { description, location });
@@ -545,15 +824,20 @@ export class DemandController {
   static async approve(req: AuthRequest, res: Response) {
     try {
       const { id } = req.params;
-      await prisma.demand.update({
-        where: { id },
-        data: { status: 'CONCLUDED' }
+      await prisma.$transaction(async (tx) => {
+        await tx.demand.update({
+          where: { id },
+          data: { status: 'CONCLUDED' }
+        });
+
+        await processDemandPostApprovalOrConclusion(id, tx);
       });
 
       await AuditService.log('APPROVE', 'DEMAND', req.user!.id, id);
 
       res.json({ message: 'Demand completion approved and moved to reports' });
     } catch (error) {
+      console.error(error);
       res.status(500).json({ error: 'Internal server error' });
     }
   }

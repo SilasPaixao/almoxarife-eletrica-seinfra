@@ -144,7 +144,7 @@ export class StorageService {
             comps = null;
           }
         }
-        if (Array.isArray(comps)) {
+        if (Array.isArray(comps) && comps.length > 0) {
           for (const comp of comps) {
             const compMat = allMaterialsMap[comp.materialId];
             if (compMat) {
@@ -162,7 +162,10 @@ export class StorageService {
       }
 
       // Keep as is if not grouped or doesn't have components
-      expanded.push(item);
+      expanded.push({
+        ...item,
+        material: material
+      });
     }
 
     // Merge duplicate materialIds to sum quantity nicely

@@ -67,7 +67,8 @@ export function OfflineProvider({ children }: { children: React.ReactNode }) {
         electricianIds: formData.electricianIds || [],
         materials: formData.materials || [],
         isPriority: formData.isPriority || false,
-        priorityExecutionDate: formData.priorityExecutionDate || ''
+        priorityExecutionDate: formData.priorityExecutionDate || '',
+        repetition: formData.repetition || 1
       },
       photoBlob,
       photoName,
@@ -198,6 +199,9 @@ export function OfflineProvider({ children }: { children: React.ReactNode }) {
         if (demand.formData.priorityExecutionDate !== undefined) {
           data.append('priorityExecutionDate', demand.formData.priorityExecutionDate || '');
         }
+        if (demand.formData.repetition !== undefined) {
+          data.append('repetition', String(demand.formData.repetition || 1));
+        }
 
         if (demand.photoBlob && demand.photoName && demand.photoType) {
           const file = new File([demand.photoBlob], demand.photoName, { type: demand.photoType });
@@ -304,7 +308,11 @@ export function OfflineProvider({ children }: { children: React.ReactNode }) {
         await IndexedDbService.saveCachedDemands(demandsRes.data);
         console.log('[Offline Sync] Successfully cached demands:', demandsRes.data.length);
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.response?.status === 401) {
+        console.warn('[Offline Sync] Session unauthorized (401) while caching demands.');
+        return;
+      }
       console.error('[Offline Sync] Failed to cache demands:', err);
     }
 
@@ -314,7 +322,11 @@ export function OfflineProvider({ children }: { children: React.ReactNode }) {
         await IndexedDbService.saveMetadata('materials', materialsRes.data);
         console.log('[Offline Sync] Successfully cached materials:', materialsRes.data.length);
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.response?.status === 401) {
+        console.warn('[Offline Sync] Session unauthorized (401) while caching materials.');
+        return;
+      }
       console.error('[Offline Sync] Failed to cache materials:', err);
     }
 
@@ -327,7 +339,11 @@ export function OfflineProvider({ children }: { children: React.ReactNode }) {
           await IndexedDbService.saveMetadata('electricians', electricians);
           console.log('[Offline Sync] Successfully cached users and electricians:', electricians.length);
         }
-      } catch (err) {
+      } catch (err: any) {
+        if (err?.response?.status === 401) {
+          console.warn('[Offline Sync] Session unauthorized (401) while caching users.');
+          return;
+        }
         console.error('[Offline Sync] Failed to cache users:', err);
       }
 
@@ -337,7 +353,11 @@ export function OfflineProvider({ children }: { children: React.ReactNode }) {
           await IndexedDbService.saveMetadata('borrowed_materials', borrowedRes.data);
           console.log('[Offline Sync] Successfully cached borrowed materials:', borrowedRes.data.length);
         }
-      } catch (err) {
+      } catch (err: any) {
+        if (err?.response?.status === 401) {
+          console.warn('[Offline Sync] Session unauthorized (401) while caching borrowed materials.');
+          return;
+        }
         console.error('[Offline Sync] Failed to cache borrowed materials:', err);
       }
     } else {
@@ -350,7 +370,11 @@ export function OfflineProvider({ children }: { children: React.ReactNode }) {
         await IndexedDbService.saveMetadata('vehicles', vehiclesRes.data);
         console.log('[Offline Sync] Successfully cached vehicles:', vehiclesRes.data.length);
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.response?.status === 401) {
+        console.warn('[Offline Sync] Session unauthorized (401) while caching vehicles.');
+        return;
+      }
       console.error('[Offline Sync] Failed to cache vehicles:', err);
     }
 
@@ -360,7 +384,11 @@ export function OfflineProvider({ children }: { children: React.ReactNode }) {
         await IndexedDbService.saveMetadata('tools', toolsRes.data);
         console.log('[Offline Sync] Successfully cached tools:', toolsRes.data.length);
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.response?.status === 401) {
+        console.warn('[Offline Sync] Session unauthorized (401) while caching tools.');
+        return;
+      }
       console.error('[Offline Sync] Failed to cache tools:', err);
     }
   };

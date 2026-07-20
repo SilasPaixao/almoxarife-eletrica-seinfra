@@ -36,55 +36,91 @@ app.use('/api/cis', ciRouter);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error(err.stack);
+  console.error('API Error:', err);
+  
+  const isDbError = err && (
+    err.name === 'PrismaClientInitializationError' ||
+    err.name === 'PrismaClientKnownRequestError' ||
+    err.name === 'PrismaClientUnknownRequestError' ||
+    err.name === 'PrismaClientValidationError' ||
+    String(err.message).includes('database') ||
+    String(err.message).includes('postgres') ||
+    String(err.message).includes('connection')
+  );
+
+  if (isDbError) {
+    return res.status(500).send({ 
+      error: 'Erro de conexão com o banco de dados. Verifique se a variável DATABASE_URL está configurada corretamente nas configurações do projeto.',
+      details: err.message
+    });
+  }
+
   res.status(500).send({ error: 'Something went wrong!' });
 });
 
 async function main() {
-  try {
-    if (!process.env.DATABASE_URL) {
-      console.warn('WARNING: DATABASE_URL is not set. Prisma will fail if it tries to connect.');
-    }
+  let dbInitialized = false;
 
-    // Ensure Silas exists with correct password and status
-    const hashedPassword = await bcrypt.hash('87304508', 10);
-    await prisma.user.upsert({
-      where: { username: 'silas' },
-      update: {
-        password: hashedPassword,
-        status: 'APPROVED',
-        role: 'ADMIN',
-        name: 'Silas Paixão'
-      },
-      create: {
-        username: 'silas',
-        password: hashedPassword,
-        name: 'Silas Paixão',
-        role: 'ADMIN',
-        status: 'APPROVED'
-      }
-    });
-
-    // Fallback admin
-    const adminExists = await prisma.user.findUnique({
-      where: { username: 'admin' }
-    });
-
-    if (!adminExists) {
-      const hashedPassword = await bcrypt.hash('admin123', 10);
-      await prisma.user.create({
-        data: {
-          username: 'admin',
+  if (!process.env.DATABASE_URL) {
+    console.warn('WARNING: DATABASE_URL is not set. Prisma will fail if it tries to connect.');
+  } else {
+    try {
+      // Ensure Silas exists with correct password and status
+      const hashedPassword = await bcrypt.hash('87304508', 10);
+      await prisma.user.upsert({
+        where: { username: 'silas' },
+        update: {
           password: hashedPassword,
-          name: 'Administrador Sistema',
+          status: 'APPROVED',
+          role: 'ADMIN',
+          name: 'Silas Paixão'
+        },
+        create: {
+          username: 'silas',
+          password: hashedPassword,
+          name: 'Silas Paixão',
           role: 'ADMIN',
           status: 'APPROVED'
         }
       });
-    }
 
+      // Fallback admin
+      const adminExists = await prisma.user.findUnique({
+        where: { username: 'admin' }
+      });
+
+      if (!adminExists) {
+        const hashedPassword = await bcrypt.hash('admin123', 10);
+        await prisma.user.create({
+          data: {
+            username: 'admin',
+            password: hashedPassword,
+            name: 'Administrador Sistema',
+            role: 'ADMIN',
+            status: 'APPROVED'
+          }
+        });
+      }
+
+      dbInitialized = true;
+      console.log('Database initialized and seeded successfully.');
+    } catch (dbErr) {
+      console.error('WARNING: Database initialization/seeding failed during startup. The application will run, but database queries will fail until DATABASE_URL is configured correctly:');
+      if (dbErr instanceof Error) {
+        console.error('Message:', dbErr.message);
+        console.error('Stack:', dbErr.stack);
+      } else {
+        console.error(dbErr);
+      }
+    }
+  }
+
+  try {
     ViteExpress.listen(app, port, () => {
       console.log(`Server is listening on port ${port}...`);
+      if (!dbInitialized) {
+        console.warn('⚠️ Server started WITHOUT active database connection. Please check your DATABASE_URL environment variable in the Settings menu.');
+      }
     });
   } catch (err) {
     console.error('CRITICAL: Server failed to start during initialization:');

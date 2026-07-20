@@ -47,7 +47,8 @@ export default function Demands() {
     electricianIds: [] as string[],
     materials: [] as { materialId: string; quantity: number; borrowed?: boolean; borrowedDeadline?: string }[],
     isPriority: false,
-    priorityExecutionDate: ''
+    priorityExecutionDate: '',
+    repetition: 1
   });
 
   const [selectedPhoto, setSelectedPhoto] = useState<File | null>(null);
@@ -65,6 +66,7 @@ export default function Demands() {
     data.append('materials', JSON.stringify(formData.materials));
     data.append('isPriority', String(formData.isPriority));
     data.append('priorityExecutionDate', formData.priorityExecutionDate || '');
+    data.append('repetition', String(formData.repetition || 1));
     
     if (selectedPhoto) {
       data.append('photo', selectedPhoto);
@@ -166,7 +168,8 @@ export default function Demands() {
       electricianIds: [],
       materials: [],
       isPriority: false,
-      priorityExecutionDate: ''
+      priorityExecutionDate: '',
+      repetition: 1
     });
   };
 
@@ -216,6 +219,7 @@ export default function Demands() {
       electricianIds: demand.electricians?.map((e: any) => e.id) || [],
       isPriority: demand.isPriority || false,
       priorityExecutionDate: demand.priorityExecutionDate ? formatLocalDate(demand.priorityExecutionDate, 'yyyy-MM-dd') : '',
+      repetition: demand.repetition || 1,
       materials: demand.plannedMaterials?.map((pm: any) => ({
         materialId: pm.materialId,
         quantity: pm.quantity,
@@ -790,6 +794,21 @@ export default function Demands() {
                 value={formData.clientNumber}
                 onChange={(e) => setFormData({...formData, clientNumber: e.target.value})}
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Repetição / Divisão de Demanda</label>
+              <input
+                type="number"
+                min="1"
+                max="100"
+                className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                value={formData.repetition}
+                onChange={(e) => setFormData({...formData, repetition: Math.max(1, parseInt(e.target.value) || 1)})}
+              />
+              <p className="text-[10px] text-gray-500 mt-1">
+                A demanda se manterá como uma única em "Pendentes" e "Em Aprovação", mas ao ser aprovada, será registrada como <span className="font-bold text-blue-600">{formData.repetition}</span> demandas separadas com as mesmas quantidades em "Executadas" e no relatório.
+              </p>
             </div>
 
             <div className="bg-amber-50/70 p-4 rounded-xl border border-amber-200 space-y-3 sm:col-span-2">
